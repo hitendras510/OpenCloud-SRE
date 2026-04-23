@@ -1,21 +1,31 @@
+# ─── Core ML ──────────────────────────────────────────────────────────────────
+torch>=2.2.0
+numpy>=1.26.0
 
-#torch
+# ─── LLM / Agents ─────────────────────────────────────────────────────────────
+openai>=1.30.0
+langgraph>=0.1.19
+langchain-core>=0.2.0
 
-transformers
+# ─── Environment ──────────────────────────────────────────────────────────────
+# gymnasium>=0.29.0      # optional – OpenCloudEnv is standalone, enable if needed
 
-#unsloth
+# ─── FAISS (DNA Memory) ───────────────────────────────────────────────────────
+faiss-cpu>=1.8.0          # CPU-only; swap for faiss-gpu on hackathon VMs
 
-#trl
+# ─── UI ───────────────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+plotly>=5.22.0
 
-langgraph
+# ─── Utilities ────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+typing-extensions>=4.11.0
 
-streamlit
+# ─── Transformers / Training (uncomment on hackathon VMs) ─────────────────────
+transformers>=4.41.0
+datasets>=2.19.0
+# trl>=0.8.6
+# unsloth                # install separately per Unsloth instructions
 
-openai
-
-python-dotenv
-
-openenv
-
-wandb
-
+# ─── Experiment Tracking ──────────────────────────────────────────────────────
+wandb>=0.17.0

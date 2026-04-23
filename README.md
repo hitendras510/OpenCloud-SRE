@@ -55,4 +55,4 @@ pip install --default-timeout=1000 torch torchvision xformers
 pip install --default-timeout=1000 "unsloth[colab-new] @ git+[https://github.com/unslothai/unsloth.git](https://github.com/unslothai/unsloth.git)"
 
 # 5. Install the OpenEnv, routing, and UI plumbing
-pip install trl langgraph streamlit openai python-dotenv openenv wandb
+pip install trl langgraph streamlit openai python-dotenv openenv wandb6666
