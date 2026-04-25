@@ -95,19 +95,37 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
     use_bf16 = _torch.cuda.is_available() and _torch.cuda.is_bf16_supported()
     use_fp16 = _torch.cuda.is_available() and not use_bf16
 
-    args = TrainingArguments(
-        output_dir=output_dir,
-        num_train_epochs=epochs,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,
-        learning_rate=2e-5,
-        save_strategy="epoch",
-        logging_steps=10,
-        bf16=use_bf16,
-        fp16=use_fp16,
-        report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
-        push_to_hub=False,       # prevents KeyError: 'push_to_hub_token' in some TRL versions
-    )
+    try:
+        from trl import SFTConfig
+        args = SFTConfig(
+            output_dir=output_dir,
+            num_train_epochs=epochs,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            learning_rate=2e-5,
+            save_strategy="epoch",
+            logging_steps=10,
+            bf16=use_bf16,
+            fp16=use_fp16,
+            report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
+            push_to_hub=False,
+            max_seq_length=max_seq_len,
+            dataset_text_field="text",
+        )
+    except ImportError:
+        args = TrainingArguments(
+            output_dir=output_dir,
+            num_train_epochs=epochs,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            learning_rate=2e-5,
+            save_strategy="epoch",
+            logging_steps=10,
+            bf16=use_bf16,
+            fp16=use_fp16,
+            report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
+            push_to_hub=False,
+        )
 
     # Build kwargs based on what this TRL version's SFTTrainer actually accepts
     trainer_sig = set(inspect.signature(SFTTrainer.__init__).parameters.keys())
@@ -123,17 +141,18 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
         trainer_kwargs["tokenizer"] = tok
 
     # dataset_text_field removed in TRL >= 0.12; use formatting_func instead
-    if "dataset_text_field" in trainer_sig:
-        trainer_kwargs["dataset_text_field"] = "text"
-    elif "formatting_func" in trainer_sig:
-        # Must return a list of strings when called with a batch dict
-        trainer_kwargs["formatting_func"] = lambda examples: (
-            examples["text"] if isinstance(examples["text"], list) else [examples["text"]]
-        )
+    if args.__class__.__name__ != "SFTConfig":
+        if "dataset_text_field" in trainer_sig:
+            trainer_kwargs["dataset_text_field"] = "text"
+        elif "formatting_func" in trainer_sig:
+            # Must return a list of strings when called with a batch dict
+            trainer_kwargs["formatting_func"] = lambda examples: (
+                examples["text"] if isinstance(examples["text"], list) else [examples["text"]]
+            )
 
-    # max_seq_length lives on trainer in TRL < 0.12
-    if "max_seq_length" in trainer_sig:
-        trainer_kwargs["max_seq_length"] = max_seq_len
+        # max_seq_length lives on trainer in TRL < 0.12
+        if "max_seq_length" in trainer_sig:
+            trainer_kwargs["max_seq_length"] = max_seq_len
 
     logger.info("SFTTrainer kwargs: %s", list(trainer_kwargs.keys()))
     trainer = SFTTrainer(**trainer_kwargs)

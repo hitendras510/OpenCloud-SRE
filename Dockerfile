@@ -37,7 +37,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ── Install Unsloth for 4-bit QLoRA (CUDA build) ─────────────────────────────
 RUN pip install --no-cache-dir \
     "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" \
-    bitsandbytes
+    "bitsandbytes==0.44.1"
 
 # ── Re-pin TRL + Transformers to a stable, mutually compatible version ────────
 # Unsloth may install a cutting-edge TRL with breaking API changes.
