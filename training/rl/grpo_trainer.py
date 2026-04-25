@@ -400,7 +400,7 @@ def train(cfg: GRPOTrainConfig) -> None:
                     epoch + 1, step + 1, cfg.steps_per_epoch, loss, mean_r,
                 )
 
-            if _WANDB and _WANDB and wandb.run:
+            if _WANDB and wandb.run:
                 log: Dict[str, float] = {
                     "train/loss": loss,
                     "train/mean_reward": mean_r,

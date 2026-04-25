@@ -154,7 +154,7 @@ def _train_plain(texts, model_name, output_dir, epochs, max_seq_len):
         save_strategy="epoch",
         bf16=use_bf16,   # FIX: prefer bf16
         fp16=use_fp16,   # FIX: no fp16 on CPU
-        report_to="none",
+        report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
     )
     trainer = Trainer(
         model=model,
