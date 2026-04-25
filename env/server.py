@@ -162,8 +162,9 @@ def reset(req: ResetRequest = ResetRequest()) -> ResetResponse:
     seed : optional int — reproduce a specific episode.
     crash_on_reset : bool — if True the datacenter starts in a degraded state.
     """
-    global _env
+    global _env, DEMO_IS_RESOLVED
     _env = OpenCloudEnv(seed=req.seed, crash_on_reset=req.crash_on_reset)
+    DEMO_IS_RESOLVED = False
     obs_raw, info = _env.reset()
     return ResetResponse(
         observation=_obs_to_dict(obs_raw, _env, 0),

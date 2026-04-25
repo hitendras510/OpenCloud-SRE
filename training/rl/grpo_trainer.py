@@ -220,11 +220,13 @@ def rollout(
     mutating state. Now we snapshot obs_before, call step once per completion,
     then pick the best next_obs to advance.
     """
-    obs = env.reset(seed=random.randint(0, 99999))
+    episode_seed = random.randint(0, 99999)
+    obs = env.reset(seed=episode_seed)
     evaluator.reset_episode()
     records: List[Dict] = []
     best_obs: Dict[str, Any] = {}
     done = False
+    action_history: List[str] = []
 
     while not done:
         prompt = build_prompt(obs, valid_actions)
@@ -262,6 +264,9 @@ def rollout(
             # by resetting the server env to a consistent state first.
             # We achieve this by re-resetting with the same seed block
             # (simplest stateless approach for the shared server):
+            env.reset(seed=episode_seed)
+            for past_act in action_history:
+                env.step(past_act)
             next_obs = env.step(action)
             rd = evaluator.score(
                 comp, action, obs, next_obs, "middle_path", [], conf
@@ -281,6 +286,8 @@ def rollout(
 
         best_idx = int(torch.tensor(rewards).argmax())
         best_obs = next_obs_list[best_idx]
+        best_action, _, _ = parse_action(completions[best_idx], valid_actions)
+        action_history.append(best_action)
 
         records.append({
             "prompt":            prompt,
