@@ -100,7 +100,6 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
         per_device_train_batch_size=2,
         gradient_accumulation_steps=4,
         learning_rate=2e-5,
-        max_seq_length=max_seq_len,
         save_strategy="epoch",
         logging_steps=10,
         bf16=use_bf16,   # FIX: prefer bf16 where supported
@@ -112,6 +111,7 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
         args=sft_cfg,
         train_dataset=ds,
         tokenizer=tok,
+        max_seq_length=max_seq_len,
     )
     trainer.train()
     trainer.save_model(output_dir)
