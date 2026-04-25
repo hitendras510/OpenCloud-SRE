@@ -114,13 +114,21 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
         model=model,
         args=args,
         train_dataset=ds,
-        dataset_text_field="text",
     )
     # TRL >= 0.12 renamed 'tokenizer' to 'processing_class'
     if "processing_class" in trainer_sig:
         trainer_kwargs["processing_class"] = tok
     elif "tokenizer" in trainer_sig:
         trainer_kwargs["tokenizer"] = tok
+
+    # dataset_text_field removed in TRL >= 0.12; use formatting_func instead
+    if "dataset_text_field" in trainer_sig:
+        trainer_kwargs["dataset_text_field"] = "text"
+    elif "formatting_func" in trainer_sig:
+        # Must return a list of strings when called with a batch dict
+        trainer_kwargs["formatting_func"] = lambda examples: (
+            examples["text"] if isinstance(examples["text"], list) else [examples["text"]]
+        )
 
     # max_seq_length lives on trainer in TRL < 0.12
     if "max_seq_length" in trainer_sig:
