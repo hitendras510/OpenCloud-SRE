@@ -79,32 +79,43 @@ def _init():
     # ── Incident Timeline ──────────────────────────────────────────────────
     st.session_state.timeline: List[Dict] = []   # list of timeline event dicts
     st.session_state.incident_start_time: Optional[float] = None
+    # ── Forensic Report ────────────────────────────────────────────────────
+    st.session_state.forensic_report: Optional[str] = None
+    st.session_state.initial_vector: List[float] = [98.0, 95.0, 5.0]
+    st.session_state.show_modal = False
 _init()
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## ⚙️ War Room Controls")
+    st.markdown("## ⚙️ Controls")
     st.divider()
-    mock_llm   = st.toggle("🧠 Mock LLM (offline)", value=True)
-    step_delay = st.slider("⏱ Step delay (s)", 0.5, 3.0, 1.0, 0.5)
+    mock_llm   = st.toggle("🧠 Offline Mode (no API key needed)", value=True,
+                           help="When ON, AI agents use fast rule-based logic instead of a real LLM. Great for demos!")
+    step_delay = st.slider("⏱ Speed (seconds per step)", 0.5, 3.0, 1.0, 0.5)
     st.divider()
     c1, c2 = st.columns(2)
     start_btn = c1.button("▶ Start", type="primary", use_container_width=True)
     stop_btn  = c2.button("⏹ Stop",  use_container_width=True)
-    reset_btn = st.button("🔄 Reset Episode", use_container_width=True)
+    reset_btn = st.button("🔄 Reset to Crashed State", use_container_width=True)
     st.divider()
-    st.markdown("**Routing Legend**")
-    st.markdown("🧬 `FAST` — DNA Cache Hit")
-    st.markdown("🤝 `MIDDLE` — Shadow Consensus")
-    st.markdown("💬 `SLOW` — ChatOps Resolver")
+    st.markdown("### 🗺️ How the AI Thinks")
+    st.markdown("""
+| Speed | What it means |
+|-------|---------------|
+| 🧬 **Instant** | Seen before → uses memory |
+| 🤝 **Fast** | New problem → agents agree |
+| 💬 **Slow** | Conflict → deep negotiation |
+""")
     st.divider()
-    st.markdown("**Governance Signals**")
-    st.markdown("✅ `AUTO_RESOLVE` — Approved")
-    st.markdown("⏳ `HUMAN_ESCALATION` — Escrowed")
-    st.markdown("🔴 `DEEP_NEGOTIATE` — Conflict")
-    st.markdown("🟣 `BLAST_RADIUS_BLOCK` — Blocked")
+    st.markdown("### 🚦 Decision Colors")
+    st.markdown("""
+- ✅ **Green** — AI acted automatically
+- ⏳ **Yellow** — Waiting for human OK
+- 🔴 **Red** — Agents are negotiating
+- 🟣 **Purple** — Action too risky, blocked
+""")
     st.divider()
-    st.caption("OpenCloud-SRE · Meta PyTorch OpenEnv Hackathon")
+    st.caption("OpenCloud-SRE · Hackathon Demo")
 
 # ── env + graph (cached) ──────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
@@ -122,6 +133,12 @@ if start_btn and _OK:
     # Record incident start time and seed opening timeline event
     import time as _time
     st.session_state.incident_start_time = _time.perf_counter()
+    # Capture initial vector for the forensic report
+    st.session_state.initial_vector = [
+        list(st.session_state.traffic)[-1],
+        list(st.session_state.db)[-1],
+        list(st.session_state.net)[-1],
+    ]
     st.session_state.timeline = [{
         "elapsed": 0.0,
         "icon": "🚨",
@@ -143,6 +160,9 @@ if reset_btn and _OK:
     st.session_state.gstate  = None; st.session_state.tokens_saved = 0
     st.session_state.blast_warnings = []; st.session_state.human_approved = False
     st.session_state.timeline = []; st.session_state.incident_start_time = None
+    st.session_state.forensic_report = None
+    st.session_state.initial_vector = [98.0, 95.0, 5.0]
+    st.session_state.show_modal = False
     if env: env.reset()
     st.cache_resource.clear()
 
@@ -151,12 +171,12 @@ st.markdown("""
 <div class="war-room-header">
   <div>
     <p class="header-title">☁️ OpenCloud-SRE · Autonomous Incident Command</p>
-    <p class="header-subtitle">PyTorch Env · LangGraph Swarm · Shadow Consensus · DNA Memory (FAISS) · Cognitive Compression</p>
+    <p class="header-subtitle">A self-healing AI swarm that detects datacenter failures, negotiates fixes across specialist agents, and learns from every incident — fully automatically.</p>
   </div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <div class="header-badge"><span class="header-dot"></span>LIVE SIMULATION</div>
-    <div class="header-badge">🧬 DNA FAISS ACTIVE</div>
-    <div class="header-badge">🛡️ 3-FILTER GOVERNANCE</div>
+    <div class="header-badge">🧬 Memory Active</div>
+    <div class="header-badge">🛡️ Safety Filters ON</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -164,8 +184,45 @@ st.markdown("""
 if not _OK:
     st.error(f"⚠️ Import error: `{_ERR}` — run `pip install -r requirements.txt`")
 
-# ── SECTION 1: Global Metrics Header ─────────────────────────────────────────
-st.markdown('<p class="section-label">📡 Live PyTorch State Tensor</p>', unsafe_allow_html=True)
+# ── Plain-English Live Status Banner ─────────────────────────────────────────
+status_ph = st.empty()
+def _render_status_banner():
+    step  = st.session_state.step
+    gov   = st.session_state.gov_signal
+    route = st.session_state.routing.lower()
+    action = (st.session_state.last_action or "—").replace("_", " ")
+    if st.session_state.resolved:
+        msg = f"✅ **Yay the issue has been resolved successfully in {step} steps!** The AI fixed the datacenter autonomously."
+        st.session_state._banner_color = "success"
+    elif not st.session_state.running and step == 0:
+        msg = "👋 **Welcome!** Press **▶ Start** in the sidebar to simulate a datacenter crash and watch AI agents fix it."
+        st.session_state._banner_color = "info"
+    elif not st.session_state.running:
+        msg = f"⏸️ **Paused** after step {step}. Press **▶ Start** to continue or **🔄 Reset** to restart."
+        st.session_state._banner_color = "info"
+    elif "fast" in route:
+        msg = f"🧬 **Step {step}: Instant fix!** The AI recognised this crash from memory and applied `{action}` immediately — no reasoning needed."
+        st.session_state._banner_color = "info"
+    elif gov == "HUMAN_ESCALATION":
+        msg = f"⏳ **Step {step}: Waiting for you.** The AI proposed `{action}` but its confidence is below 90%. Approve or reject it in the panel on the right."
+        st.session_state._banner_color = "warning"
+    elif gov == "BLAST_RADIUS_BLOCK":
+        msg = f"🛑 **Step {step}: Action blocked!** The safety filter stopped the AI — the proposed action was too risky. Agents are re-thinking."
+        st.session_state._banner_color = "warning"
+    elif gov == "DEEP_NEGOTIATE":
+        msg = f"💬 **Step {step}: Agents are debating.** The Network and Database AIs disagreed — the ChatOps Resolver is negotiating a safe fix."
+        st.session_state._banner_color = "info"
+    else:
+        msg = f"🤝 **Step {step}: Agents agreed.** Both specialists voted for `{action}`. Executing now."
+        st.session_state._banner_color = "info"
+    color = getattr(st.session_state, "_banner_color", "info")
+    if color == "success":   status_ph.success(msg)
+    elif color == "warning": status_ph.warning(msg)
+    else:                    status_ph.info(msg)
+_render_status_banner()
+
+# ── SECTION 1: Datacenter Health Metrics ─────────────────────────────────────
+st.markdown('<p class="section-label">📡 Datacenter Health — Live Readings (lower traffic/temp = better; higher health = better)</p>', unsafe_allow_html=True)
 
 traffic_v = list(st.session_state.traffic)[-1]
 db_v      = list(st.session_state.db)[-1]
@@ -202,7 +259,8 @@ left, right = st.columns([3, 2], gap="large")
 with left:
 
     # ── Live chart ────────────────────────────────────────────────────────
-    st.markdown('<p class="section-label">📊 Real-Time Server Metrics</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-label">📊 Datacenter Metrics Over Time</p>', unsafe_allow_html=True)
+    st.caption("Watch the red/orange lines fall and the green line rise as the AI fixes the incident. SLO (purple dot) must reach 0.95 to close the incident.")
     chart_ph = st.empty()
 
     def _chart():
@@ -241,8 +299,9 @@ with left:
 
     st.divider()
 
-    # ── SECTION 2: Partial Observability Vision ────────────────────────────
-    st.markdown('<p class="section-label">🔭 Partial Observability · Agent Blind Spots</p>', unsafe_allow_html=True)
+    # ── SECTION 2: Agent Blind Spots ──────────────────────────────────────
+    st.markdown('<p class="section-label">🔭 Why Multiple Agents? — Each AI Only Sees Part of the Picture</p>', unsafe_allow_html=True)
+    st.caption("Each specialist agent is deliberately blind to other metrics. This forces honest collaboration — neither can act alone.")
     vc1, vc2 = st.columns(2, gap="medium")
 
     with vc1:
@@ -525,12 +584,38 @@ def _step():
             "detail": f"SLO Score: {result.get('slo_score', 0):.3f}",
             "color": "#4ade80",
         })
+        # ── Auto-generate Forensic Report ─────────────────────────────────
+        try:
+            from utils.forensic_report import generate_markdown_report
+            _final_vec = result.get("current_state_tensor", [0.0, 0.0, 0.0])
+            _rp_str    = getattr(
+                result.get("routing_path"), "value",
+                str(result.get("routing_path", "middle_path"))
+            )
+            _duration  = round(_time.perf_counter() - _t0, 2)
+            st.session_state.forensic_report = generate_markdown_report(
+                chat_history     = result.get("chat_history", []),
+                timeline         = st.session_state.timeline,
+                initial_vector   = st.session_state.initial_vector,
+                final_vector     = _final_vec,
+                final_slo        = result.get("slo_score", 0.0),
+                total_steps      = st.session_state.step,
+                tokens_saved     = st.session_state.tokens_saved,
+                routing_path     = _rp_str,
+                last_action      = action,
+                duration_seconds = _duration,
+                blast_warnings   = st.session_state.blast_warnings or [],
+                metadata         = result.get("metadata", {}),
+            )
+            st.session_state.show_modal = True
+        except Exception as _report_err:
+            logging.warning("Forensic report generation failed: %s", _report_err)
 
 # ── Timeline renderer ─────────────────────────────────────────────────────────
 def _render_timeline():
     """Render a vertical incident routing timeline using native Streamlit."""
     events = st.session_state.get("timeline", [])
-    st.markdown('<p class="section-label">📋 Incident Routing Timeline</p>',
+    st.markdown('<p class="section-label">📋 Incident History</p>',
                 unsafe_allow_html=True)
     if not events:
         st.caption("Timeline will populate once the simulation starts.")
@@ -575,10 +660,11 @@ if st.session_state.running and not st.session_state.resolved:
     with right: _tl(); _render_escrow(); _term()
     gov_now = st.session_state.gov_signal
     if st.session_state.resolved:
+        st.toast("Yay the issue has been resolved successfully! 🥳", icon="🎉")
         if getattr(st.session_state, "demo_success", False):
-            st.success("🎉 **DEMO SUCCESS:** Root cause mitigated. System stabilizing.")
+            st.success("🎉 **Yay the issue has been resolved successfully!** Root cause mitigated. System stabilizing.")
         else:
-            st.success("✅ **System Recovered!** SLO target reached — Incident closed.")
+            st.success("✅ **Yay the issue has been resolved successfully!** SLO target reached — Incident closed.")
         st.session_state.running = False
         st.balloons()
     elif gov_now == "HUMAN_ESCALATION":
@@ -589,15 +675,67 @@ if st.session_state.running and not st.session_state.resolved:
 
 elif st.session_state.resolved:
     if getattr(st.session_state, "demo_success", False):
-        st.success("🎉 **DEMO SUCCESS:** Root cause mitigated. System stabilizing.")
+        st.success("🎉 **Yay the issue has been resolved successfully!** Root cause mitigated. System stabilizing.")
     else:
-        st.success("✅ **System Recovered!** SLO target reached — Incident closed.")
+        st.success("✅ **Yay the issue has been resolved successfully!** SLO target reached — Incident closed.")
 elif not st.session_state.running:
     if not _OK:
         st.info(f"⚠️ Display-only mode — import error: `{_ERR}`")
     else:
         st.info("▶ Press **Start** in the sidebar to begin the incident simulation.")
 
-# ── Incident Timeline (always rendered below main layout) ─────────────────────
 st.divider()
 _render_timeline()
+
+# ── Forensic Report Section ───────────────────────────────────────────────────
+if st.session_state.get("forensic_report"):
+    st.divider()
+    st.markdown('<p class="section-label">📋 Auto-Generated Incident Report</p>', unsafe_allow_html=True)
+    st.caption("This professional Root Cause Analysis was written **automatically by the AI** — no human wrote a single word of it.")
+
+    report_md = st.session_state.forensic_report
+
+    fc1, fc2 = st.columns([2, 5])
+    with fc1:
+        st.download_button(
+            label="⬇️ Download Full Report (.md)",
+            data=report_md.encode("utf-8"),
+            file_name=f"OpenCloud_SRE_RCA_{time.strftime('%Y%m%d_%H%M%S')}.md",
+            mime="text/markdown",
+            type="primary",
+            use_container_width=True,
+        )
+    with fc2:
+        st.info(
+            "📄 **What is this?** After resolving the incident, the AI swarm automatically wrote a complete "
+            "Root Cause Analysis — including what happened, which agents acted, what was fixed, "
+            "and how many AI compute tokens were saved. Open the preview below to read it."
+        )
+
+    with st.expander("🔍 Read the Report", expanded=False):
+        st.markdown(report_md)
+
+# ── Success Modal ─────────────────────────────────────────────────────────────
+def _render_success_modal():
+    if st.session_state.get("show_modal"):
+        st.markdown(f"""
+        <div class="success-modal-overlay">
+          <div class="success-modal">
+            <span class="modal-icon">🎉</span>
+            <div class="modal-title">SUCCESS!</div>
+            <div class="modal-text">Yay the issue has been resolved successfully! 🥳</div>
+            <form action="/" method="get" style="display:inline">
+              <button class="modal-btn" type="submit">Got it!</button>
+            </form>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        # We use a trick: if they click 'Got it', the form submit will reload the page
+        # which will reset the show_modal state if we're not careful.
+        # But since we want it to close, a simple CSS-only close or st.button is better.
+        # Actually, let's just use an st.button to close it.
+        if st.button("Close Modal", key="close_modal_btn"):
+            st.session_state.show_modal = False
+            st.rerun()
+
+_render_success_modal()
