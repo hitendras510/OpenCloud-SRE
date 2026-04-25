@@ -224,10 +224,11 @@ def initial_state(
     -------
     SREGraphState
     """
-    from env.state_tensor import CloudStateTensor   # lazy import avoids cycles
-
+    # BUG-FIX: do NOT import CloudStateTensor here — it pulls in torch and breaks
+    # graph/UI code running on machines without a GPU environment.
+    # Inline the crashed state vector: [Traffic=95, DB_Temp=90, Network=10]
     if state_vector is None:
-        state_vector = CloudStateTensor.crashed().as_list()
+        state_vector = [95.0, 90.0, 10.0]   # datacenter in critical failure state
 
     return SREGraphState(
         current_state_tensor=state_vector,
