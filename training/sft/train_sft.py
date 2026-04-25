@@ -106,6 +106,7 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
         bf16=use_bf16,
         fp16=use_fp16,
         report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
+        push_to_hub=False,       # prevents KeyError: 'push_to_hub_token' in some TRL versions
     )
 
     # Build kwargs based on what this TRL version's SFTTrainer actually accepts

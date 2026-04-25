@@ -39,6 +39,13 @@ RUN pip install --no-cache-dir \
     "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" \
     bitsandbytes
 
+# ── Re-pin TRL + Transformers to a stable, mutually compatible version ────────
+# Unsloth may install a cutting-edge TRL with breaking API changes.
+# Pin back to the last stable release that works with our training code.
+RUN pip install --no-cache-dir --force-reinstall \
+    "trl==0.11.4" \
+    "transformers==4.47.1"
+
 # ── Copy project source ───────────────────────────────────────────────────────
 COPY . .
 
