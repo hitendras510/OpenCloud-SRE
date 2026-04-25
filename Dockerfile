@@ -17,6 +17,7 @@ FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV BNB_CUDA_VERSION=121
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev \
@@ -37,7 +38,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ── Install Unsloth for 4-bit QLoRA (CUDA build) ─────────────────────────────
 RUN pip install --no-cache-dir \
     "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" \
-    "bitsandbytes==0.44.1"
+    bitsandbytes
 
 # ── Re-pin TRL + Transformers to a stable, mutually compatible version ────────
 # Unsloth may install a cutting-edge TRL with breaking API changes.

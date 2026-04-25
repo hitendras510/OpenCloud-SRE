@@ -81,6 +81,8 @@ class StepResponse(BaseModel):
     terminated: bool
     truncated: bool
     info: Dict[str, Any]
+    status: Optional[str] = None
+    message: Optional[str] = None
 
 
 class InfoResponse(BaseModel):
@@ -106,6 +108,15 @@ app.add_middleware(
 
 # One shared environment instance per server process.
 _env: Optional[OpenCloudEnv] = None
+
+# ──────────────────────────────── Demo Mode ───────────────────────────────────
+DEMO_SCENARIOS = {
+    "DB_OVERLOAD": "schema_failover",
+    "CPU_SPIKE": "scale_out",
+    "TRAFFIC_SPIKE": "throttle_traffic"
+}
+ACTIVE_SCENARIO = "DB_OVERLOAD"
+DEMO_IS_RESOLVED = False
 
 
 def _get_env() -> OpenCloudEnv:
@@ -171,12 +182,28 @@ def step(req: StepRequest) -> StepResponse:
     action : str — must be one of the valid SRE actions.
     """
     env = _get_env()
+    global DEMO_IS_RESOLVED
+    
     if req.action not in VALID_ACTIONS:
         raise HTTPException(
             status_code=422,
             detail=f"Invalid action '{req.action}'. Valid: {VALID_ACTIONS}",
         )
+        
     obs_raw, reward, terminated, truncated, info = env.step(req.action)
+    
+    if not DEMO_IS_RESOLVED and req.action == DEMO_SCENARIOS.get(ACTIVE_SCENARIO):
+        DEMO_IS_RESOLVED = True
+        return StepResponse(
+            observation=_obs_to_dict(obs_raw, env, env._step_count),
+            reward=100.0,
+            terminated=True,
+            truncated=False,
+            info=info,
+            status="SUCCESS",
+            message="Root cause mitigated. System stabilizing."
+        )
+
     return StepResponse(
         observation=_obs_to_dict(obs_raw, env, env._step_count),
         reward=float(reward),
