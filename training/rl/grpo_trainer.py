@@ -210,7 +210,7 @@ def rollout(
     evaluator,
     cfg: GRPOTrainConfig,
     valid_actions: List[str],
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Run one full episode. For each step, sample G completions from the SAME
     obs_before state (reset env to that obs_before for each completion so
@@ -223,6 +223,7 @@ def rollout(
     obs = env.reset(seed=random.randint(0, 99999))
     evaluator.reset_episode()
     records: List[Dict] = []
+    best_obs: Dict[str, Any] = {}
     done = False
 
     while not done:
@@ -293,9 +294,10 @@ def rollout(
         # FIX BUG-4: server returns terminated/truncated at top level
         obs  = best_obs
         done = bool(best_obs.get("terminated", False)) or \
-               bool(best_obs.get("truncated", False))
+               bool(best_obs.get("truncated", False)) or \
+               best_obs.get("status") == "SUCCESS"
 
-    return records
+    return records, best_obs
 
 
 # ── GRPO gradient update ──────────────────────────────────────────────────────
@@ -379,7 +381,7 @@ def train(cfg: GRPOTrainConfig) -> None:
         logger.info("═══ Epoch %d / %d ═══", epoch + 1, cfg.epochs)
 
         for step in range(cfg.steps_per_epoch):
-            records = rollout(model, tokenizer, env, evaluator, cfg, valid_actions)
+            records, final_obs = rollout(model, tokenizer, env, evaluator, cfg, valid_actions)
             loss    = grpo_update(model, tokenizer, records, optimizer, cfg)
 
             # FIX BUG-7: compute metrics over this step only (not accumulating)
@@ -410,6 +412,20 @@ def train(cfg: GRPOTrainConfig) -> None:
                     if vs:
                         log[f"reward/{k}"] = sum(vs) / len(vs)
                 wandb.log(log, step=global_step)
+
+            if final_obs.get("status") == "SUCCESS":
+                msg = final_obs.get("message", "Resolved.")
+                logger.info("\n" + "="*80)
+                logger.info("🎉 DEMO SUCCESS: %s", msg)
+                logger.info("[Post-Mortem] LeadSRE: Root cause identified and mitigated. Graceful shutdown triggered.")
+                logger.info("="*80 + "\n")
+                if _WANDB and wandb.run:
+                    wandb.log({"demo/status": 1, "demo/message": msg})
+                # Break out of epochs for demo
+                break
+        
+        if final_obs.get("status") == "SUCCESS":
+            break
 
         ckpt = f"{cfg.output_dir}/epoch_{epoch + 1}"
         os.makedirs(ckpt, exist_ok=True)
