@@ -132,6 +132,7 @@ def load_model(cfg: GRPOTrainConfig):
 def rollout(model, tokenizer, env: OpenEnvClient, evaluator, cfg: GRPOTrainConfig,
             valid_actions: List[str]) -> List[Dict]:
     obs = env.reset(seed=random.randint(0, 9999))
+    evaluator.reset_episode()   # clear anti-hacking action history per episode
     records = []
     done = False
     while not done:
