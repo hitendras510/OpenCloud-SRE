@@ -59,3 +59,26 @@ source venv/bin/activate
 pip install torch torchvision xformers --default-timeout=1000
 pip install "unsloth[colab-new] @ git+[https://github.com/unslothai/unsloth.git](https://github.com/unslothai/unsloth.git)"
 pip install -r requirements.txt
+
+### 2. Run the OpenEnv Server (CPU)
+In Terminal 1, boot the PyTorch environment behind the FastAPI wrapper:
+
+Bash
+uvicorn env.server:app --host 0.0.0.0 --port 7860
+### 3. Launch the "War Room" UI (CPU)
+In Terminal 2, start the Streamlit incident command dashboard:
+
+Bash
+streamlit run ui/app.py
+### 4. Execute the Training Pipeline (GPU)
+To watch the model learn via our verifiable GRPO loop:
+
+Bash
+# Generate the synthetic SFT warm-up data
+python3 -m training.sft.dataset_generator --count 50
+
+# Run Supervised Fine Tuning (Unsloth + TRL)
+python3 training/sft/train_sft.py
+
+# Execute the Group Relative Policy Optimization (GRPO) Loop
+python3 training/rl/grpo_trainer.py
