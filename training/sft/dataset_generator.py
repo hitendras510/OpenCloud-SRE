@@ -3,27 +3,14 @@ training/sft/dataset_generator.py
 ===================================
 Synthetic SFT dataset generator for OpenCloud-SRE.
 
-Generates 50 high-quality incident resolution logs that mimic the JSON output
-of a perfectly operating LangGraph pipeline.  These are used as the Supervised
-Fine-Tuning (SFT) seed dataset for the Unsloth/TRL training loop on hackathon
-VMs.
-
-Each log entry captures one complete episode step:
-  • The initial crashed state
-  • The 3-tier routing decision (path taken)
-  • The inter-agent chat (network_ctrl, db_ctrl, lead_sre)
-  • The final executed action and resulting metrics
-  • A single "perfect" assistant turn that a fine-tuned model should replicate
-
-Output format: JSON Lines (.jsonl), one episode per line.
+Uses the Hugging Face Inference API (meta-llama/Meta-Llama-3-70B-Instruct)
+instead of OpenAI. Falls back to a deterministic rule-based generator when
+HF_TOKEN is not set or the API is unreachable.
 
 Usage
 -----
-  export OPENAI_API_KEY=sk-...
+  export HF_TOKEN=hf_...
   python -m training.sft.dataset_generator --output data/sft_logs.jsonl --count 50
-
-Without an API key the script falls back to a rule-based generator that
-produces structurally identical records for local testing.
 """
 
 from __future__ import annotations
@@ -41,29 +28,23 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────── optional OpenAI ─────────────────────────────────
+# ──────────────────────────── optional HF client ──────────────────────────────
 try:
-    from openai import OpenAI
-    _OPENAI_AVAILABLE = True
+    from huggingface_hub import InferenceClient
+    _HF_AVAILABLE = True
 except ImportError:
-    OpenAI = None  # type: ignore[assignment,misc]
-    _OPENAI_AVAILABLE = False
+    InferenceClient = None  # type: ignore[assignment, misc]
+    _HF_AVAILABLE = False
 
-# ────────────────────────────── constants ────────────────────────────────────
+# ────────────────────────────── constants ─────────────────────────────────────
 
-DEFAULT_MODEL = "gpt-4o"
-DEFAULT_COUNT = 50
-DEFAULT_OUTPUT = "data/sft_logs.jsonl"
-BATCH_SIZE = 5            # generate this many records per API call
-TEMPERATURE = 0.85        # higher = more diverse scenarios
-REQUEST_DELAY_S = 1.5     # rate-limit courtesy delay between batches
+DEFAULT_MODEL   = "meta-llama/Meta-Llama-3-70B-Instruct"
+DEFAULT_COUNT   = 50
+DEFAULT_OUTPUT  = "data/sft_logs.jsonl"
+BATCH_SIZE      = 5
+REQUEST_DELAY_S = 2.0       # HF Inference API rate-limit courtesy
 
-# Routing path distribution (roughly realistic)
-_PATH_WEIGHTS = {
-    "fast_path": 0.25,
-    "middle_path": 0.55,
-    "slow_path": 0.20,
-}
+_PATH_WEIGHTS = {"fast_path": 0.25, "middle_path": 0.55, "slow_path": 0.20}
 
 VALID_ACTIONS = [
     "throttle_traffic", "load_balance", "schema_failover",
@@ -71,21 +52,13 @@ VALID_ACTIONS = [
 ]
 
 FAULT_SCENARIOS = [
-    "traffic_spike",
-    "db_overload",
-    "network_partition",
-    "cascade_failure",
-    "hot_key_storm",
-    "replica_lag",
-    "BGP_flap",
-    "memory_leak_OOM",
+    "traffic_spike", "db_overload", "network_partition", "cascade_failure",
+    "hot_key_storm", "replica_lag", "BGP_flap", "memory_leak_OOM",
 ]
 
-# ──────────────────────── GPT-4o generation prompt ───────────────────────────
+# ─────────────────── Llama-3 generation prompt ────────────────────────────────
 
-GENERATION_SYSTEM_PROMPT = """
-You are a senior Site Reliability Engineer generating a synthetic training dataset
-for an AI incident command system called OpenCloud-SRE.
+GENERATION_PROMPT = """You are a senior Site Reliability Engineer generating a synthetic training dataset for an AI incident command system called OpenCloud-SRE.
 
 Generate exactly {batch_size} incident resolution log entries as a JSON array.
 
@@ -131,22 +104,58 @@ Each entry MUST follow this exact schema:
     {{"role": "lead_sre", "content": "<consensus decision>"}},
     {{"role": "executor", "content": "<action taken + outcome>"}}
   ],
-  "perfect_assistant_response": "<The ideal SRE response as a single coherent paragraph (3-5 sentences). Explain what happened, why the action was chosen, and what the outcome was. Write as if you are the Lead SRE briefing the on-call team.>"
+  "perfect_assistant_response": "<3-5 sentences as the Lead SRE briefing the on-call team>"
 }}
 
 Rules:
-- Make each scenario realistic and distinct (use all 8 fault types across the batch).
+- Make each scenario realistic and distinct.
 - slo_score_after should be higher than slo_score_before for successful resolutions.
 - routing_path == "fast_path" means dna_memory_hit.confidence == "High Match".
-- routing_path == "slow_path" means consensus_status == "red" and the conflict was resolved.
-- fast_path entries have simpler agent_chat (just executor).
-- Vary the fault scenarios, SLO improvements, and resolutions across entries.
+- routing_path == "slow_path" means consensus_status == "red".
 - Start IDs from {start_id}.
-- Output ONLY the JSON array, no other text.
-""".strip()
+- Output ONLY the JSON array, no other text.""".strip()
 
-# ─────────────────────────────── rule-based fallback ─────────────────────────
 
+# ────────────────────────── HF batch generator ────────────────────────────────
+
+def _generate_batch_via_hf(
+    client: Any,
+    batch_size: int,
+    start_id: int,
+    model: str,
+) -> List[Dict[str, Any]]:
+    """Call the HF Inference API (Llama-3-70B) to generate a batch of log entries."""
+    prompt = GENERATION_PROMPT.format(batch_size=batch_size, start_id=start_id)
+
+    response = client.chat_completion(
+        model=model,
+        messages=[
+            {"role": "system",
+             "content": "You are a JSON generation assistant. Output only valid JSON."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=4096,
+        temperature=0.85,
+    )
+    raw = response.choices[0].message.content or "[]"
+
+    # Strip markdown fences if present
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+
+    parsed = json.loads(raw.strip())
+    if isinstance(parsed, list):
+        return parsed
+    for key in ("entries", "logs", "data", "records"):
+        if key in parsed and isinstance(parsed[key], list):
+            return parsed[key]
+    raise ValueError(f"Unexpected HF response shape: {list(parsed.keys())}")
+
+
+# ─────────────────────── rule-based fallback ──────────────────────────────────
 
 def _random_state(crashed: bool = True) -> Dict[str, float]:
     if crashed:
@@ -163,40 +172,36 @@ def _random_state(crashed: bool = True) -> Dict[str, float]:
 
 
 def _slo_score(state: Dict[str, float]) -> float:
-    traffic_norm = (100 - state["Traffic_Load"]) / 100
-    db_norm = (100 - state["Database_Temperature"]) / 100
-    net_norm = state["Network_Health"] / 100
-    return round((traffic_norm + db_norm + net_norm) / 3, 4)
+    return round(
+        ((100 - state["Traffic_Load"]) + (100 - state["Database_Temperature"])
+         + state["Network_Health"]) / 300.0, 4
+    )
 
 
 def _rule_based_entry(entry_id: int) -> Dict[str, Any]:
-    """Generate a single structurally valid log entry without an LLM."""
+    """Generate a single structurally valid log entry without any LLM."""
     random.seed(entry_id * 37)
-
-    fault = random.choice(FAULT_SCENARIOS)
+    fault   = random.choice(FAULT_SCENARIOS)
     initial = _random_state(crashed=True)
-    path_weights = list(_PATH_WEIGHTS.values())
-    paths = list(_PATH_WEIGHTS.keys())
-    routing_path = random.choices(paths, weights=path_weights, k=1)[0]
-
-    action = random.choice(VALID_ACTIONS)
-    post = _random_state(crashed=False)
+    paths   = list(_PATH_WEIGHTS.keys())
+    wts     = list(_PATH_WEIGHTS.values())
+    routing_path = random.choices(paths, weights=wts, k=1)[0]
+    action  = random.choice(VALID_ACTIONS)
+    post    = _random_state(crashed=False)
     slo_before = _slo_score(initial)
-    slo_after = _slo_score(post)
+    slo_after  = _slo_score(post)
 
-    net_intents = ["throttle", "circuit_break", "scale_out", "load_balance", "noop"]
-    db_intents = ["failover", "cache_flush", "restart", "noop"]
-    net_intent_val = random.choice(net_intents)
-    db_intent_val = random.choice(db_intents)
+    net_intent_val = random.choice(["throttle","circuit_break","scale_out","load_balance","noop"])
+    db_intent_val  = random.choice(["failover","cache_flush","restart","noop"])
     consensus = "red" if (
-        net_intent_val in ("circuit_break",) and db_intent_val in ("failover", "restart")
+        net_intent_val == "circuit_break" and db_intent_val in ("failover","restart")
     ) else "green"
 
     agent_chat = [
         {"role": "network_ctrl", "content": f"[Network Intent] intent={net_intent_val} confidence=0.82"},
-        {"role": "db_ctrl", "content": f"[DB Intent] intent={db_intent_val} confidence=0.76"},
-        {"role": "lead_sre", "content": f"[Shadow Consensus] {consensus.upper()} → action={action}"},
-        {"role": "executor", "content": f"[Executor] action={action} | SLO_before={slo_before:.3f} → SLO_after={slo_after:.3f}"},
+        {"role": "db_ctrl",      "content": f"[DB Intent] intent={db_intent_val} confidence=0.76"},
+        {"role": "lead_sre",     "content": f"[Shadow Consensus] {consensus.upper()} → action={action}"},
+        {"role": "executor",     "content": f"[Executor] action={action} | SLO={slo_before:.3f}→{slo_after:.3f}"},
     ]
 
     return {
@@ -233,48 +238,13 @@ def _rule_based_entry(entry_id: int) -> Dict[str, Any]:
             f"Network_Health={initial['Network_Health']}. "
             f"The Shadow Consensus layer ({consensus}) resolved to execute '{action}' "
             f"based on network intent '{net_intent_val}' and DB intent '{db_intent_val}'. "
-            f"Post-remediation the SLO score improved from {slo_before:.3f} to {slo_after:.3f}, "
-            f"{'successfully recovering the system.' if slo_after > slo_before else 'indicating further intervention is required.'}"
+            f"Post-remediation SLO improved from {slo_before:.3f} to {slo_after:.3f}, "
+            f"{'successfully recovering the system.' if slo_after > slo_before else 'further intervention required.'}"
         ),
     }
 
 
-# ──────────────────────── GPT-4o batch generator ─────────────────────────────
-
-
-def _generate_batch_via_llm(
-    client: Any,
-    batch_size: int,
-    start_id: int,
-    model: str,
-) -> List[Dict[str, Any]]:
-    """Call GPT-4o to generate a batch of log entries."""
-    prompt = GENERATION_SYSTEM_PROMPT.format(
-        batch_size=batch_size,
-        start_id=start_id,
-    )
-    response = client.chat.completions.create(
-        model=model,
-        temperature=TEMPERATURE,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": "You are a JSON generation assistant."},
-            {"role": "user", "content": prompt},
-        ],
-    )
-    raw = response.choices[0].message.content or "[]"
-    # GPT might wrap in {"entries": [...]} – unwrap if needed
-    parsed = json.loads(raw)
-    if isinstance(parsed, list):
-        return parsed
-    for key in ("entries", "logs", "data", "records"):
-        if key in parsed and isinstance(parsed[key], list):
-            return parsed[key]
-    raise ValueError(f"Unexpected GPT response shape: {list(parsed.keys())}")
-
-
-# ─────────────────────────────── main logic ───────────────────────────────────
-
+# ──────────────────────────── main logic ──────────────────────────────────────
 
 def generate_dataset(
     count: int = DEFAULT_COUNT,
@@ -285,34 +255,20 @@ def generate_dataset(
     """
     Generate *count* synthetic incident logs and save to *output_path*.
 
-    Parameters
-    ----------
-    count:
-        Number of log entries to generate.
-    output_path:
-        Destination ``.jsonl`` file path (created if absent).
-    model:
-        OpenAI model to use (default: ``gpt-4o``).
-    use_llm:
-        If True and an API key is available, use GPT-4o.
-        Otherwise use the rule-based fallback.
-
-    Returns
-    -------
-    Path
-        Absolute path to the written ``.jsonl`` file.
+    Authenticates with HF_TOKEN env var. Falls back to rule-based generation
+    when the token is absent or the HF API is unreachable.
     """
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     client = None
-    if use_llm and _OPENAI_AVAILABLE:
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        if api_key:
-            client = OpenAI(api_key=api_key)
-            logger.info("Using GPT-4o (%s) for generation.", model)
+    if use_llm and _HF_AVAILABLE:
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if hf_token:
+            client = InferenceClient(token=hf_token)
+            logger.info("Using HF Inference API: %s", model)
         else:
-            logger.warning("OPENAI_API_KEY not set – falling back to rule-based generator.")
+            logger.warning("HF_TOKEN not set – falling back to rule-based generator.")
     elif not use_llm:
         logger.info("use_llm=False – using rule-based generator.")
 
@@ -320,52 +276,45 @@ def generate_dataset(
     entry_id = 1
 
     if client is not None:
-        # Batch GPT-4o generation
         while len(all_entries) < count:
-            remaining = count - len(all_entries)
+            remaining  = count - len(all_entries)
             batch_size = min(BATCH_SIZE, remaining)
             logger.info(
-                "Generating batch %d/%d via LLM (start_id=%d, size=%d)...",
+                "Generating batch %d/%d via HF LLM (start_id=%d, size=%d)…",
                 len(all_entries) // BATCH_SIZE + 1,
                 (count + BATCH_SIZE - 1) // BATCH_SIZE,
-                entry_id,
-                batch_size,
+                entry_id, batch_size,
             )
             try:
-                batch = _generate_batch_via_llm(client, batch_size, entry_id, model)
+                batch = _generate_batch_via_hf(client, batch_size, entry_id, model)
                 all_entries.extend(batch[:batch_size])
                 entry_id += batch_size
                 time.sleep(REQUEST_DELAY_S)
             except Exception as exc:
-                logger.error("LLM batch failed (%s) – falling back to rules for this batch.", exc)
+                logger.error("HF batch failed (%s) – rule-based fallback for this batch.", exc)
                 for _ in range(batch_size):
                     all_entries.append(_rule_based_entry(entry_id))
                     entry_id += 1
     else:
-        # Pure rule-based generation
         for i in range(1, count + 1):
             all_entries.append(_rule_based_entry(i))
             if i % 10 == 0:
                 logger.info("Generated %d/%d entries.", i, count)
 
-    # Truncate to exactly `count` entries
     all_entries = all_entries[:count]
 
-    # Write JSONL
     with out.open("w", encoding="utf-8") as f:
         for entry in all_entries:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     logger.info(
         "✅ Dataset saved: %s (%d entries, %.1f KB)",
-        out.resolve(),
-        len(all_entries),
-        out.stat().st_size / 1024,
+        out.resolve(), len(all_entries), out.stat().st_size / 1024,
     )
     return out.resolve()
 
 
-# ──────────────────────────────── CLI entry-point ─────────────────────────────
+# ────────────────────────────── CLI ───────────────────────────────────────────
 
 def main() -> None:
     logging.basicConfig(
@@ -373,33 +322,19 @@ def main() -> None:
         format="%(asctime)s | %(levelname)s | %(message)s",
         datefmt="%H:%M:%S",
     )
-
     parser = argparse.ArgumentParser(
         description="Generate synthetic SFT logs for OpenCloud-SRE fine-tuning."
     )
-    parser.add_argument(
-        "--output", default=DEFAULT_OUTPUT,
-        help=f"Output .jsonl file path (default: {DEFAULT_OUTPUT})",
-    )
-    parser.add_argument(
-        "--count", type=int, default=DEFAULT_COUNT,
-        help=f"Number of log entries to generate (default: {DEFAULT_COUNT})",
-    )
-    parser.add_argument(
-        "--model", default=DEFAULT_MODEL,
-        help=f"OpenAI model to use (default: {DEFAULT_MODEL})",
-    )
-    parser.add_argument(
-        "--no-llm", action="store_true",
-        help="Skip LLM calls; use rule-based generation only (useful for CI).",
-    )
+    parser.add_argument("--output", default=DEFAULT_OUTPUT)
+    parser.add_argument("--count",  type=int, default=DEFAULT_COUNT)
+    parser.add_argument("--model",  default=DEFAULT_MODEL)
+    parser.add_argument("--no-llm", action="store_true",
+                        help="Skip HF API; use rule-based generation only.")
     args = parser.parse_args()
 
     out_path = generate_dataset(
-        count=args.count,
-        output_path=args.output,
-        model=args.model,
-        use_llm=not args.no_llm,
+        count=args.count, output_path=args.output,
+        model=args.model, use_llm=not args.no_llm,
     )
     print(f"\nDataset written to: {out_path}")
 

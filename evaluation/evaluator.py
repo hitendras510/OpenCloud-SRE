@@ -8,11 +8,12 @@ Reward Components
   format_reward          : +10   — valid parseable JSON micro-intent
   blast_radius_penalty   : -50   — action violates Dependency Matrix
   state_recovery_reward  : +50 to +100 — deterministic SLO / tensor improvement
-  llm_reasoning_score    : +10 to +20  — GPT-4o-mini grades ChatOps quality
-                                         (SLOW PATH only)
+  llm_reasoning_score    : +10 to +20  — Llama-3-8B via HF Inference API grades
+                                         ChatOps quality (SLOW PATH only)
 
 All components are logged independently to W&B so judges can audit
 that the model isn't gaming a single soft score (reward hacking prevention).
+Fully vendor-agnostic: no OpenAI dependency.
 """
 from __future__ import annotations
 
@@ -29,11 +30,15 @@ try:
 except ImportError:
     _WANDB = False
 
-# ── optional OpenAI (for llm_reasoning_score) ─────────────────────────────────
+# ── optional HF client (for llm_reasoning_score) ──────────────────────────────
 try:
-    from openai import OpenAI as _OpenAI; _OPENAI = True
+    from huggingface_hub import InferenceClient as _HFClient
+    _HF_AVAILABLE = True
 except ImportError:
-    _OPENAI = False
+    _HFClient = None  # type: ignore[assignment, misc]
+    _HF_AVAILABLE = False
+
+_REASONING_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -151,9 +156,9 @@ _REASONING_PROMPT = """You are an expert SRE evaluator.
 Rate the quality of the following ChatOps negotiation transcript on a scale from 0 to 20.
 
 Criteria:
-  - Accuracy of root-cause analysis (0–8)
-  - Justification quality for the chosen action (0–6)
-  - Risk awareness / blast-radius consideration (0–6)
+  - Accuracy of root-cause analysis (0-8)
+  - Justification quality for the chosen action (0-6)
+  - Risk awareness / blast-radius consideration (0-6)
 
 Output ONLY a JSON object: {{"score": <integer 0-20>, "reason": "<one sentence>"}}
 
@@ -163,33 +168,39 @@ Transcript:
 def _llm_reasoning_score(
     chat_history: List[str],
     routing_path: str,
-    openai_client: Optional[Any],
+    hf_client: Optional[Any],
 ) -> float:
     """
-    +10 to +20 via GPT-4o-mini only when routing_path == "slow_path".
-    Returns 0.0 for non-slow paths or when no client is available.
+    +10 to +20 via Llama-3-8B-Instruct (HF Inference API), SLOW PATH only.
+    Returns 0.0 for non-slow paths or when HF_TOKEN is not configured.
     """
-    if routing_path != "slow_path" or not openai_client or not chat_history:
+    if routing_path != "slow_path" or not hf_client or not chat_history:
         return 0.0
     transcript = "\n".join(chat_history[-8:])
     try:
-        resp = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0.0,
-            response_format={"type": "json_object"},
+        resp = hf_client.chat_completion(
+            model=_REASONING_MODEL,
             messages=[
-                {"role": "system", "content": "You are an SRE evaluation assistant."},
-                {"role": "user",   "content": _REASONING_PROMPT.format(transcript=transcript)},
+                {"role": "system",
+                 "content": "You are an SRE evaluation assistant. Output only valid JSON."},
+                {"role": "user",
+                 "content": _REASONING_PROMPT.format(transcript=transcript)},
             ],
+            max_tokens=128,
+            temperature=0.0,
         )
         raw    = resp.choices[0].message.content or "{}"
-        parsed = json.loads(raw)
+        # Strip markdown fences
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"): raw = raw[4:]
+        parsed    = json.loads(raw.strip())
         raw_score = float(parsed.get("score", 0))
-        # Clamp to [0, 20], then scale to [+10, +20]
-        clamped = max(0.0, min(20.0, raw_score))
+        clamped   = max(0.0, min(20.0, raw_score))
         return 10.0 + clamped * 0.5   # maps [0,20] → [10,20]
     except Exception as exc:
-        logger.warning("LLM reasoning score failed: %s", exc)
+        logger.warning("HF reasoning score failed: %s", exc)
         return 0.0
 
 
@@ -210,11 +221,14 @@ class MultiComponentEvaluator:
     """
 
     def __init__(self) -> None:
-        self._openai_client: Optional[Any] = None
-        if _OPENAI:
-            api_key = os.getenv("OPENAI_API_KEY", "")
-            if api_key:
-                self._openai_client = _OpenAI(api_key=api_key)
+        self._hf_client: Optional[Any] = None
+        if _HF_AVAILABLE:
+            hf_token = os.getenv("HF_TOKEN", "")
+            if hf_token:
+                self._hf_client = _HFClient(token=hf_token)
+                logger.info("Evaluator: HF reasoning scorer active (%s).", _REASONING_MODEL)
+            else:
+                logger.info("Evaluator: HF_TOKEN not set — llm_reasoning_score will return 0.")
 
     # ── public API ────────────────────────────────────────────────────────────
     def score(
@@ -261,7 +275,7 @@ class MultiComponentEvaluator:
 
         # 4. LLM reasoning score (slow path only)
         reasoning = _llm_reasoning_score(
-            chat_history, routing_path, self._openai_client)
+            chat_history, routing_path, self._hf_client)
 
         total = fmt + blast + recovery + reasoning
 

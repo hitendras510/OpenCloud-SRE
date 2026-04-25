@@ -2,8 +2,8 @@
 torch>=2.2.0
 numpy>=1.26.0
 
-# ─── LLM / Agents ─────────────────────────────────────────────────────────────
-openai>=1.30.0
+# ─── LLM / Agents (vendor-agnostic, no OpenAI) ───────────────────────────────
+huggingface_hub>=0.23.0    # InferenceClient for Llama-3 dataset gen + evaluation
 langgraph>=0.1.19
 langchain-core>=0.2.0
 
