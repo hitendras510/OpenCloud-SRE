@@ -40,6 +40,7 @@ class ConsensusStatus(str, Enum):
     """Traffic-light state of the Shadow Consensus layer."""
     GREEN = "green"    # Intents agree / synergy confirmed – safe to execute
     RED = "red"        # Intents conflict – escalate to ChatOps
+    RETRY = "retry"    # High risk action lacking diagnostic command
 
 
 class GovernanceSignal(str, Enum):
@@ -95,16 +96,19 @@ class ChatMessage(TypedDict):
 
 class NetworkIntent(TypedDict):
     """Micro-intent JSON emitted by the Network Controller node."""
-    intent: str           # e.g. "throttle" | "circuit_break" | "scale_out"
-    confidence: float     # [0, 1]
-    rationale: str        # one-sentence justification
-
+    thought_process: str
+    observed_anomalies: list[str]
+    verified_root_cause: str
+    action: str
+    risk_score: float
 
 class DBIntent(TypedDict):
     """Micro-intent JSON emitted by the Database Controller node."""
-    intent: str           # e.g. "failover" | "cache_flush" | "restart"
-    confidence: float
-    rationale: str
+    thought_process: str
+    observed_anomalies: list[str]
+    verified_root_cause: str
+    action: str
+    risk_score: float
 
 
 # ───────────────────────────── primary state dict ─────────────────────────────
