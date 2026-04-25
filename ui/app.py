@@ -546,7 +546,7 @@ with tab_analytics:
     """, unsafe_allow_html=True)
 
     if _PLOTLY:
-        ac1, ac2; ac1, ac2 = st.columns(2, gap="large")
+        ac1, ac2 = st.columns(2, gap="large")
 
         # ── SPEED COMPARISON ───────────────────────────────────────────────
         with ac1:
