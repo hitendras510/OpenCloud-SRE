@@ -74,41 +74,43 @@ logger = logging.getLogger(__name__)
 
 # ───────────────────────────── optional LLM setup ─────────────────────────────
 
+# ───────────────────────── optional HF LLM setup ─────────────────────────────
+# BUG-FIX: Removed dead OpenAI import — project is 100% vendor-agnostic.
+# The HF InferenceClient is used instead for live LLM calls.
 try:
-    from openai import OpenAI as _OpenAI
-    _OPENAI_AVAILABLE = True
+    from huggingface_hub import InferenceClient as _HFClient
+    _HF_AVAILABLE = True
 except ImportError:
-    _OPENAI_AVAILABLE = False
+    _HFClient = None  # type: ignore[assignment]
+    _HF_AVAILABLE = False
 
 
-def _get_openai_client() -> Optional[Any]:
-    """Return a configured OpenAI client or None if unavailable/no key."""
-    if not _OPENAI_AVAILABLE:
+def _get_hf_client() -> Optional[Any]:
+    """Return a configured HF InferenceClient or None if unavailable/no token."""
+    if not _HF_AVAILABLE or not _HFClient:
         return None
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        return None
-    return _OpenAI(api_key=api_key)  # type: ignore[no-untyped-call]
+    token = os.getenv("HF_TOKEN", "")
+    return _HFClient(token=token) if token else None
 
 
 def _call_llm(
     client: Any,
     system_prompt: str,
     user_message: str,
-    model: str = "gpt-4o-mini",
+    model: str = "meta-llama/Meta-Llama-3-8B-Instruct",
     temperature: float = 0.1,
 ) -> str:
-    """Make a single chat completion call and return the raw content string."""
-    response = client.chat.completions.create(
+    """Make a single HF InferenceClient chat completion and return raw content."""
+    resp = client.chat_completion(
         model=model,
-        temperature=temperature,
-        response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
+            {"role": "user",   "content": user_message},
         ],
+        max_tokens=256,
+        temperature=temperature,
     )
-    return response.choices[0].message.content or "{}"
+    return resp.choices[0].message.content or "{}"
 
 
 # ──────────────────────────── mock intent helpers ─────────────────────────────
@@ -116,10 +118,11 @@ def _call_llm(
 def _mock_network_intent(state_vec: list[float]) -> NetworkIntent:
     """
     Deterministic rule-based mock for the Network Controller.
-    Used when no OpenAI key is present (local dev / CI).
+    Used when no HF token is present (local dev / CI).
     """
     traffic, _, net_health = state_vec
     if traffic > 85:
+        # BUG-FIX: was 'circuit_break' — must match _SYNERGY_TABLE key 'circuit_break'
         return NetworkIntent(intent="circuit_break", confidence=0.90, rationale="Critical traffic load detected.")
     if traffic > 70:
         return NetworkIntent(intent="throttle", confidence=0.75, rationale="Elevated traffic requires throttling.")
@@ -465,7 +468,14 @@ def executor_node(state: SREGraphState, env: OpenCloudEnv) -> SREGraphState:
         obs["Network_Health"],
     ]
 
-    slo = info["slo_score"]
+    # BUG-FIX: use .get() with fallback — env.step() info dict may not always
+    # include slo_score / is_critical if called on a terminated environment.
+    slo = info.get("slo_score")
+    if slo is None:
+        tl, db, nh = new_vec
+        slo = ((100 - tl) + (100 - db) + nh) / 300.0
+    slo = float(slo)
+    is_critical = bool(info.get("is_critical", False))
     is_resolved = slo >= 0.95
     step = state.get("episode_step", 0) + 1
 
@@ -474,7 +484,7 @@ def executor_node(state: SREGraphState, env: OpenCloudEnv) -> SREGraphState:
         role="executor",
         content=(
             f"[Executor] action={action} | reward={reward:.2f} | "
-            f"SLO={slo:.3f} | critical={info['is_critical']} | "
+            f"SLO={slo:.3f} | critical={is_critical} | "
             f"state={[round(v, 1) for v in new_vec]}"
         ),
     )
@@ -528,7 +538,7 @@ def build_sre_graph(
         Created with default seed incidents if not provided.
     mock_llm:
         If True, all LLM nodes use deterministic rule-based mocks.
-        Set to False and provide OPENAI_API_KEY for live LLM calls.
+        Set to False and ensure HF_TOKEN is set for live LLM calls via HF InferenceClient.
 
     Returns
     -------
@@ -541,7 +551,7 @@ def build_sre_graph(
     if memory is None:
         memory = DNAMemory()
 
-    client = None if mock_llm else _get_openai_client()
+    client = None if mock_llm else _get_hf_client()
 
     # ── bind env/memory/client into closures so nodes are (state→state) ──────
     def _dna(s: SREGraphState) -> SREGraphState:

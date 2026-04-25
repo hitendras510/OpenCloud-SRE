@@ -122,20 +122,29 @@ def _state_recovery_reward(obs_before: Dict[str, Any],
     """Deterministic reward based on SLO improvement. Returns [-50, +100]."""
     def _slo(obs: Dict) -> float:
         s = obs.get("observation", obs)
-        tl = s.get("Traffic_Load", 50.0)
-        dt = s.get("Database_Temperature", 50.0)
-        nh = s.get("Network_Health", 50.0)
+        tl = float(s.get("Traffic_Load", 50.0))
+        dt = float(s.get("Database_Temperature", 50.0))
+        nh = float(s.get("Network_Health", 50.0))
         return ((100 - tl) + (100 - dt) + nh) / 300.0
 
-    slo_before = obs_before.get("observation", {}).get("slo_score") or _slo(obs_before)
-    slo_after  = obs_after.get("observation", {}).get("slo_score") or _slo(obs_after)
-    delta = slo_after - slo_before
-    raw   = delta * 100.0
+    def _get_slo(obs: Dict) -> float:
+        # BUG-FIX: use `is None` not `or` — slo_score=0.0 is valid and falsy
+        inner = obs.get("observation", obs)
+        v = inner.get("slo_score")
+        return float(v) if v is not None else _slo(obs)
 
-    if raw >= 0:
-        return 50.0 + raw * 0.5
+    slo_before = _get_slo(obs_before)
+    slo_after  = _get_slo(obs_after)
+    delta = slo_after - slo_before
+
+    # BUG-FIX: correct formula
+    # delta is in [-1, 1]; scale to [-100, +100] first, then map:
+    #   improvement (delta>0): reward = 50 + delta*100   → [50, 150] clipped to [50,100]
+    #   degradation (delta<0): reward = delta*100        → [-100, 0] clipped to [-50, 0]
+    if delta >= 0:
+        return min(100.0, 50.0 + delta * 100.0)
     else:
-        return max(-50.0, raw * 0.5)
+        return max(-50.0, delta * 100.0)
 
 
 def _resource_efficiency_reward(obs_after: Dict[str, Any]) -> float:
@@ -291,15 +300,20 @@ def _confidence_calibration_penalty(
     if confidence < 0.85:
         return 0.0
 
-    def _slo(obs: Dict) -> float:
+    def _get_slo(obs: Dict) -> float:
+        # BUG-FIX: use `is None` not `or` — slo_score=0.0 is valid and falsy
+        inner = obs.get("observation", obs)
+        v = inner.get("slo_score")
+        if v is not None:
+            return float(v)
         s = obs.get("observation", obs)
-        tl = s.get("Traffic_Load", 50.0)
-        dt = s.get("Database_Temperature", 50.0)
-        nh = s.get("Network_Health", 50.0)
+        tl = float(s.get("Traffic_Load", 50.0))
+        dt = float(s.get("Database_Temperature", 50.0))
+        nh = float(s.get("Network_Health", 50.0))
         return ((100 - tl) + (100 - dt) + nh) / 300.0
 
-    slo_before = obs_before.get("observation", {}).get("slo_score") or _slo(obs_before)
-    slo_after  = obs_after.get("observation", {}).get("slo_score") or _slo(obs_after)
+    slo_before = _get_slo(obs_before)
+    slo_after  = _get_slo(obs_after)
 
     if slo_after < slo_before - 0.01:  # outcome was worse by at least 1%
         logger.info(

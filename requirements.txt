@@ -1,9 +1,16 @@
 # ─── Core ML ──────────────────────────────────────────────────────────────────
 torch>=2.2.0
 numpy>=1.26.0
+pyyaml>=6.0.1                  # utils/config_loader.py
 
 # ─── LLM / Agents (vendor-agnostic, no OpenAI) ───────────────────────────────
-huggingface_hub>=0.23.0    # InferenceClient for Llama-3 dataset gen + evaluation
+huggingface_hub>=0.23.0        # InferenceClient for Llama-3 (dataset gen + eval)
+transformers>=4.41.0
+datasets>=2.19.0
+accelerate>=0.30.0             # BUG-FIX: required by transformers device_map="auto"
+trl>=0.9.0                     # BUG-FIX: SFTConfig added in 0.9.0 (was 0.8.6)
+
+# ─── LangGraph / LangChain ────────────────────────────────────────────────────
 langgraph>=0.1.19
 langchain-core>=0.2.0
 
@@ -13,9 +20,6 @@ uvicorn[standard]>=0.30.0
 httpx>=0.27.0
 requests>=2.31.0
 pydantic>=2.7.0
-
-# ─── Environment ──────────────────────────────────────────────────────────────
-# gymnasium>=0.29.0    # optional
 
 # ─── FAISS (DNA Memory) ───────────────────────────────────────────────────────
 faiss-cpu>=1.8.0
@@ -28,12 +32,9 @@ plotly>=5.22.0
 python-dotenv>=1.0.0
 typing-extensions>=4.11.0
 
-# ─── Transformers / Training ──────────────────────────────────────────────────
-transformers>=4.41.0
-datasets>=2.19.0
-trl>=0.8.6
-# unsloth              # install separately per Unsloth instructions on GPU VMs
-# bitsandbytes>=0.43.0 # needed for 4-bit QLoRA on GPU VMs
-
 # ─── Experiment Tracking ──────────────────────────────────────────────────────
 wandb>=0.17.0
+
+# ─── GPU-only (install separately on CUDA VMs) ────────────────────────────────
+# unsloth                      # install per Unsloth instructions: pip install unsloth
+# bitsandbytes>=0.43.0         # auto-installed by setup_env.sh when CUDA is detected

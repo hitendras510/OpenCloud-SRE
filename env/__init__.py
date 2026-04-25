@@ -1,12 +1,14 @@
-"""env — OpenCloudEnv simulation, state tensor, and FastAPI server."""
-from env.environment import OpenCloudEnv, VALID_ACTIONS
-from env.state_tensor import CloudStateTensor
-from env.fault_injection import ChaosMonkey, FaultCategory
-from env.observability import ObservabilityBus
+"""
+env — OpenCloudEnv simulation, state tensor, and FastAPI server.
 
-__all__ = [
-    "OpenCloudEnv", "VALID_ACTIONS",
-    "CloudStateTensor",
-    "ChaosMonkey", "FaultCategory",
-    "ObservabilityBus",
-]
+IMPORTANT: This __init__ imports NOTHING by default to prevent torch
+import errors in non-training contexts (graph, UI, evaluation tests).
+Import sub-modules explicitly where needed:
+
+    from env.environment   import OpenCloudEnv, VALID_ACTIONS   # needs torch
+    from env.state_tensor  import CloudStateTensor               # needs torch
+    from env.fault_injection import ChaosMonkey, FaultCategory  # needs torch
+    from env.observability import ObservabilityBus               # no torch
+    from env.action_space  import ActionRegistry                 # needs torch
+"""
+# Intentionally empty — see docstring above.
