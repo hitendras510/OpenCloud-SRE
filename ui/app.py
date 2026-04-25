@@ -552,6 +552,16 @@ if st.session_state.running and not st.session_state.resolved:
         st.success("✅ **System Recovered!** SLO ≥ 0.95 — Incident closed.")
         st.session_state.running = False
         st.balloons()
+    elif st.session_state.step >= 50:
+        st.error("❌ **Max Steps Reached!** The AI failed to recover the system within 50 steps. Incident aborted.")
+        st.session_state.running = False
+        st.session_state.timeline.append({
+            "elapsed": round(time.perf_counter() - (st.session_state.incident_start_time or time.perf_counter()), 2),
+            "icon": "💥",
+            "event": "Max Steps Reached — Aborted",
+            "detail": "The agent was unable to recover the environment.",
+            "color": "#ef4444",
+        })
     elif st.session_state.gov_signal == "HUMAN_ESCALATION":
         st.warning("⏳ Simulation paused — awaiting human approval in the escrow panel above.")
     else:
