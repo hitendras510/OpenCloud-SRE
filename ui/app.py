@@ -11,6 +11,11 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    st_autorefresh = None
+
 st.set_page_config(
     page_title="OpenCloud-SRE · NEXUS",
     page_icon="⚡", layout="wide",
@@ -154,19 +159,19 @@ with st.sidebar:
     st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.62rem;color:#f43f5e;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">🔴 Chaos Control Center</div>', unsafe_allow_html=True)
     if st.button("Inject CPU Spike", use_container_width=True):
         try:
-            requests.post("http://localhost:8000/inject-fault", json={"fault_type": "CPU_SPIKE", "value": 95}, timeout=2)
+            requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "CPU_SPIKE", "value": 95.0}, timeout=2)
             st.toast("🔴 CPU Spike Injected!")
         except Exception as e:
             st.toast(f"Error injecting fault: {e}")
     if st.button("Simulate Network Partition", use_container_width=True):
         try:
-            requests.post("http://localhost:8000/inject-fault", json={"fault_type": "NETWORK_PARTITION", "value": 95}, timeout=2)
+            requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "NETWORK_PARTITION", "value": 95.0}, timeout=2)
             st.toast("🔴 Network Partition Simulated!")
         except Exception as e:
             st.toast(f"Error injecting fault: {e}")
     if st.button("Trigger DB Deadlock", use_container_width=True):
         try:
-            requests.post("http://localhost:8000/inject-fault", json={"fault_type": "DB_DEADLOCK", "value": 95}, timeout=2)
+            requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "DB_DEADLOCK", "value": 95.0}, timeout=2)
             st.toast("🔴 DB Deadlock Triggered!")
         except Exception as e:
             st.toast(f"Error injecting fault: {e}")
@@ -818,13 +823,14 @@ def _step():
         
     # Poll backend for manual injected faults
     try:
-        r = requests.get("http://localhost:8000/metrics", timeout=0.5)
+        r = requests.get("http://127.0.0.1:8000/metrics", timeout=0.5)
         if r.status_code == 200:
-            obs = r.json().get("observation", {})
+            data = r.json()
+            obs = data.get("metrics", {})
             if obs:
-                env.state.traffic_load = obs.get("Traffic_Load", env.state.traffic_load)
-                env.state.database_temperature = obs.get("Database_Temperature", env.state.database_temperature)
-                env.state.network_health = obs.get("Network_Health", env.state.network_health)
+                env.state.traffic_load = obs.get("CPU", env.state.traffic_load)
+                env.state.database_temperature = obs.get("DB_Temp", env.state.database_temperature)
+                env.state.network_health = obs.get("Latency", env.state.network_health)
                 env.state._sync_tensor()
                 gs["current_state_tensor"] = env.state.as_list()
     except Exception:
@@ -926,14 +932,47 @@ def _step():
 
 # ── main tick ─────────────────────────────────────────────────────────────────
 if st.session_state.running and not st.session_state.resolved:
-    _step()
+    # Live Polling loop to pull metrics from the backend every 1 second
+    try:
+        r = requests.get("http://127.0.0.1:8000/metrics", timeout=0.5)
+        if r.status_code == 200:
+            data = r.json()
+            obs = data.get("metrics", {})
+            if obs:
+                cpu = obs.get("CPU", st.session_state.traffic[-1])
+                db = obs.get("DB_Temp", st.session_state.db[-1])
+                net = obs.get("Latency", st.session_state.net[-1])
+                st.session_state.traffic.append(cpu)
+                st.session_state.db.append(db)
+                st.session_state.net.append(net)
+                slo = ((100 - cpu) + (100 - db) + net) / 300.0
+                st.session_state.slo.append(slo)
+                st.session_state.step += 1
+                st.session_state.steps.append(st.session_state.step)
+                
+                # Update visual state if needed for graph
+                if env:
+                    env.state.traffic_load = cpu
+                    env.state.database_temperature = db
+                    env.state.network_health = net
+                    env.state._sync_tensor()
+                
+            if data.get("status") == "CRITICAL" and _OK and graph:
+                _step()
+    except Exception:
+        pass
+
     if st.session_state.resolved:
         msg = "🎉 DEMO SUCCESS — System stabilized." if st.session_state.demo_success else "✅ System Recovered — SLO ≥ 0.95"
         st.success(msg); st.session_state.running = False; st.balloons()
     elif st.session_state.gov_signal == "HUMAN_ESCALATION":
         st.warning("⏳ Governance Escrow Active — awaiting human approval in War Room tab.")
     else:
-        time.sleep(step_delay); st.rerun()
+        if st_autorefresh:
+            st_autorefresh(interval=1000, limit=None, key="live_poll_running")
+        else:
+            time.sleep(1)
+            st.rerun()
 
 elif st.session_state.resolved:
     msg = "🎉 DEMO SUCCESS — System stabilized." if st.session_state.demo_success else "✅ System Recovered — SLO ≥ 0.95"
@@ -943,3 +982,4 @@ elif not st.session_state.running:
         st.error(f"Import error: `{_ERR}`")
     else:
         st.info("▶ Click **Start** in the sidebar to launch the incident simulation.")
+

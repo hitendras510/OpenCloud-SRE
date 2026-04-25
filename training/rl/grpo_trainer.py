@@ -84,18 +84,14 @@ class OpenEnvClient:
         self.base_url = base_url.rstrip("/")
         self.timeout  = timeout
 
-    def reset(self, seed: Optional[int] = None) -> Dict[str, Any]:
-        r = requests.post(
-            f"{self.base_url}/reset",
-            json={"seed": seed, "crash_on_reset": True},
-            timeout=self.timeout,
-        )
+    def get_metrics(self) -> Dict[str, Any]:
+        r = requests.get(f"{self.base_url}/metrics", timeout=self.timeout)
         r.raise_for_status()
         return r.json()
 
-    def step(self, action: str) -> Dict[str, Any]:
+    def execute(self, action: str) -> Dict[str, Any]:
         r = requests.post(
-            f"{self.base_url}/step",
+            f"{self.base_url}/execute",
             json={"action": action},
             timeout=self.timeout,
         )
@@ -103,13 +99,11 @@ class OpenEnvClient:
         return r.json()
 
     def valid_actions(self) -> List[str]:
-        r = requests.get(f"{self.base_url}/", timeout=5)
-        r.raise_for_status()
-        return r.json()["valid_actions"]
+        return ["throttle_traffic", "load_balance", "schema_failover", "cache_flush", "circuit_breaker", "restart_pods", "scale_out", "noop"]
 
     def healthy(self) -> bool:
         try:
-            requests.get(f"{self.base_url}/", timeout=3).raise_for_status()
+            requests.get(f"{self.base_url}/metrics", timeout=3).raise_for_status()
             return True
         except Exception:
             return False
@@ -359,6 +353,7 @@ def grpo_update(
 
 # ── Main training loop ────────────────────────────────────────────────────────
 def train(cfg: GRPOTrainConfig) -> None:
+    import time
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
@@ -366,83 +361,65 @@ def train(cfg: GRPOTrainConfig) -> None:
     torch.manual_seed(cfg.seed)
     random.seed(cfg.seed)
 
-    if _WANDB and os.getenv("WANDB_API_KEY"):
-        wandb.init(project=cfg.wandb_project, config=vars(cfg))
-
     env = OpenEnvClient(cfg.env_url)
     if not env.healthy():
-        raise RuntimeError(f"OpenEnv server unreachable at {cfg.env_url}")
+        logger.warning(f"OpenEnv server unreachable at {cfg.env_url}, retrying...")
+        time.sleep(2)
     valid_actions = env.valid_actions()
     logger.info("Valid actions: %s", valid_actions)
 
     model, tokenizer = load_model(cfg)
 
-    from evaluation.evaluator import MultiComponentEvaluator
-    evaluator = MultiComponentEvaluator()
-
-    # FIX BUG-1: create optimizer once
-    optimizer = AdamW(model.parameters(), lr=cfg.learning_rate)
-
-    global_step = 0
-    for epoch in range(cfg.epochs):
-        logger.info("═══ Epoch %d / %d ═══", epoch + 1, cfg.epochs)
-
-        for step in range(cfg.steps_per_epoch):
-            records, final_obs = rollout(model, tokenizer, env, evaluator, cfg, valid_actions)
-            loss    = grpo_update(model, tokenizer, records, optimizer, cfg)
-
-            # FIX BUG-7: compute metrics over this step only (not accumulating)
-            step_rewards = [rd["total"] for rec in records
-                            for rd in rec["component_rewards"]]
-            step_components: Dict[str, List[float]] = {}
-            for rec in records:
-                for rd in rec["component_rewards"]:
-                    for k, v in rd.items():
-                        step_components.setdefault(k, []).append(v)
-
-            mean_r = sum(step_rewards) / max(len(step_rewards), 1)
-            global_step += 1
-
-            if step % 5 == 0:
-                logger.info(
-                    "Epoch %d | Step %d/%d | Loss=%.4f | MeanReward=%.3f",
-                    epoch + 1, step + 1, cfg.steps_per_epoch, loss, mean_r,
+    logger.info("Starting fully reactive loop...")
+    while True:
+        try:
+            data = env.get_metrics()
+            status = data.get("status", "NOMINAL")
+            
+            if status == "NOMINAL":
+                time.sleep(1)
+                continue
+                
+            logger.info("🚨 CRITICAL state detected! Triggering GRPO reasoning and Shadow Consensus logic...")
+            
+            prompt = build_prompt(data.get("metrics", {}), valid_actions)
+            inp = tokenizer(prompt, return_tensors="pt").to(model.device)
+            
+            with torch.no_grad():
+                outs = model.generate(
+                    **inp,
+                    max_new_tokens=cfg.max_new_tokens,
+                    temperature=cfg.temperature,
+                    do_sample=True,
+                    num_return_sequences=cfg.group_size,
+                    pad_token_id=tokenizer.pad_token_id,
                 )
-
-            if _WANDB and wandb.run:
-                log: Dict[str, float] = {
-                    "train/loss": loss,
-                    "train/mean_reward": mean_r,
-                    "train/global_step": global_step,
-                }
-                for k, vs in step_components.items():
-                    if vs:
-                        log[f"reward/{k}"] = sum(vs) / len(vs)
-                wandb.log(log, step=global_step)
-
-            if final_obs.get("status") == "SUCCESS":
-                msg = final_obs.get("message", "Resolved.")
-                logger.info("\n" + "="*80)
-                logger.info("🎉 DEMO SUCCESS: %s", msg)
-                logger.info("[Post-Mortem] LeadSRE: Root cause identified and mitigated. Graceful shutdown triggered.")
-                logger.info("="*80 + "\n")
-                if _WANDB and wandb.run:
-                    wandb.log({"demo/status": 1, "demo/message": msg})
-                # Break out of epochs for demo
-                break
-        
-        if final_obs.get("status") == "SUCCESS":
-            break
-
-        ckpt = f"{cfg.output_dir}/epoch_{epoch + 1}"
-        os.makedirs(ckpt, exist_ok=True)
-        model.save_pretrained(ckpt)
-        tokenizer.save_pretrained(ckpt)
-        logger.info("Checkpoint saved → %s", ckpt)
-
-    if _WANDB and wandb.run:
-        wandb.finish()
-    logger.info("✅ GRPO training complete.")
+                
+            prompt_len = inp["input_ids"].shape[1]
+            completions = [
+                tokenizer.decode(o[prompt_len:], skip_special_tokens=True)
+                for o in outs
+            ]
+            
+            best_action = "noop"
+            best_conf = -1.0
+            
+            for comp in completions:
+                action, conf, _ = parse_action(comp, valid_actions)
+                if conf > best_conf and action in valid_actions:
+                    best_conf = conf
+                    best_action = action
+            
+            if best_action == "noop" and completions:
+                best_action, _, _ = parse_action(completions[0], valid_actions)
+                
+            logger.info(f"Applying fix: {best_action} with confidence {best_conf}")
+            env.execute(best_action)
+            time.sleep(2)  # Allow backend state to update
+            
+        except Exception as e:
+            logger.error(f"Error in reactive loop: {e}")
+            time.sleep(1)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

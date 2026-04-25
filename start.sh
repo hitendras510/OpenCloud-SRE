@@ -9,7 +9,7 @@ uvicorn env.server:app --host 0.0.0.0 --port 8000 &
 SERVER_PID=$!
 
 # Wait for server to be ready
-sleep 3
+sleep 5
 
 echo "🖥️ Starting NEXUS Streamlit UI on port 7860..."
 streamlit run ui/app.py \
@@ -22,9 +22,7 @@ echo "🧠 Starting GRPO Agent Training Loop..."
 # Using the default model if not fine-tuned yet; adjust paths as needed.
 python -m training.rl.grpo_trainer \
     --model Qwen/Qwen2.5-1.5B-Instruct \
-    --env-url http://localhost:8000 \
-    --epochs ${RL_EPOCHS:-3} \
-    --steps ${RL_STEPS:-50} &
+    --env-url http://localhost:8000 &
 TRAINER_PID=$!
 
 echo "✅ System is fully running. Press Ctrl+C to stop."
