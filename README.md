@@ -1,3 +1,13 @@
+---
+title: OpenCloud-SRE
+emoji: 🚀
+colorFrom: blue
+colorTo: indigo
+sdk: streamlit
+sdk_version: 1.35.0
+app_file: ui/app.py
+pinned: false
+---
 # 🚀 OpenCloud-SRE
 **The Autonomous Incident Command for Data Cloud Systems**
 
