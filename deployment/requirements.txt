@@ -1,0 +1,44 @@
+# deployment/requirements.txt
+# ─────────────────────────────────────────────────────────────────────────────
+# Production-lite dependencies for the Hugging Face Space Docker container.
+# This is a SUBSET of the root requirements.txt — training-only packages
+# (trl, unsloth, bitsandbytes) are installed directly in the Dockerfile
+# to enable version-specific CUDA builds.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core ML ──────────────────────────────────────────────────────────────────
+# torch is installed via Dockerfile with cu121 index URL
+numpy>=1.26.0
+pyyaml>=6.0.1
+
+# ── LLM / Inference ───────────────────────────────────────────────────────────
+huggingface_hub>=0.23.0
+transformers>=4.41.0
+accelerate>=0.30.0
+
+# ── LangGraph ─────────────────────────────────────────────────────────────────
+langgraph>=0.1.19
+langchain-core>=0.2.0
+
+# ── OpenEnv FastAPI Server ───────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27.0
+requests>=2.31.0
+pydantic>=2.7.0
+
+# ── FAISS (DNA Memory) ───────────────────────────────────────────────────────
+faiss-cpu>=1.8.0
+
+# ── UI ────────────────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+plotly>=5.22.0
+
+# ── Training (training-only, installed in Dockerfile separately) ──────────────
+datasets>=2.19.0
+trl>=0.9.0
+wandb>=0.17.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+typing-extensions>=4.11.0
