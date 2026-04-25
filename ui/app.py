@@ -497,18 +497,11 @@ with tab_war:
         html = '<div class="tl-container">'
         for i, ev in enumerate(evs):
             is_last = i == len(evs) - 1
-            html += f"""
-            <div class="tl-item">
-              <div class="tl-icon-wrap">
-                <div class="tl-dot" style="background:{ev['color']}18;border:1.5px solid {ev['color']}">{ev['icon']}</div>
-                {'' if is_last else f'<div class="tl-line" style="background:{ev["color"]}"></div>'}
-              </div>
-              <div class="tl-content">
-                <div class="tl-time">+{ev['elapsed']:.2f}s</div>
-                <div class="tl-event" style="color:{ev['color']}">{ev['event']}</div>
-                <div class="tl-detail">{ev['detail']}</div>
-              </div>
-            </div>"""
+            tl_line = '' if is_last else f'<div class="tl-line" style="background:{ev["color"]}"></div>'
+            dot = f'<div class="tl-dot" style="background:{ev["color"]}18;border:1.5px solid {ev["color"]}">{ev["icon"]}</div>'
+            icon_wrap = f'<div class="tl-icon-wrap">{dot}{tl_line}</div>'
+            content = f'<div class="tl-content"><div class="tl-time">+{ev["elapsed"]:.2f}s</div><div class="tl-event" style="color:{ev["color"]}">{ev["event"]}</div><div class="tl-detail">{ev["detail"]}</div></div>'
+            html += f'<div class="tl-item">{icon_wrap}{content}</div>'
         html += '</div>'
         tl_ph.markdown(html, unsafe_allow_html=True)
     _render_timeline()
