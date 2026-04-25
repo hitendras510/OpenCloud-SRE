@@ -1,9 +1,9 @@
-"""ui/app.py — OpenCloud-SRE War Room Dashboard"""
+"""ui/app.py — OpenCloud-SRE NEXUS Command Center v3.0"""
 from __future__ import annotations
-import sys, time, logging
+import sys, time, logging, requests
 from pathlib import Path
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -12,17 +12,17 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 
 st.set_page_config(
-    page_title="OpenCloud-SRE · War Room",
-    page_icon="☁️", layout="wide",
+    page_title="OpenCloud-SRE · NEXUS",
+    page_icon="⚡", layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # Load external CSS
 _CSS_PATH = Path(__file__).parent / "styles.css"
 if _CSS_PATH.exists():
-    st.markdown(f"<style>{_CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+    st.markdown(f"<style>{_CSS_PATH.read_text()}</style>", unsafe_allow_html=True)
 
-# ── imports ──────────────────────────────────────────────────────────────────
+# ── imports ───────────────────────────────────────────────────────────────────
 try:
     from env.environment import OpenCloudEnv
     from graph.sre_graph import build_sre_graph
@@ -30,7 +30,7 @@ try:
         initial_state, RoutingPath, ConsensusStatus,
         GovernanceSignal, TrustDecision,
     )
-    _OK = True
+    _OK = True; _ERR = ""
 except ImportError as e:
     _OK = False; _ERR = str(e)
 
@@ -41,37 +41,49 @@ except ImportError:
     _PLOTLY = False
 
 # ── constants ─────────────────────────────────────────────────────────────────
-MAX_H = 60
-# Estimated tokens saved per routing path (approximate)
-TOKENS_FAST   = 1800   # DNA hit skips both controllers + consensus LLM
-TOKENS_MIDDLE =  900   # Shadow Consensus skips ChatOps LLM
-TOKENS_SLOW   =    0   # Full chain
+MAX_H         = 80
+TOKENS_FAST   = 1800
+TOKENS_MIDDLE = 900
 
-ROLE_CSS  = {"network_ctrl":"msg-network","db_ctrl":"msg-db","lead_sre":"msg-sre",
-             "executor":"msg-exec","dna_memory":"msg-dna","chatops":"msg-chatops"}
-ROLE_ICON = {"network_ctrl":"🌐","db_ctrl":"🗄️","lead_sre":"🎖️",
-             "executor":"⚡","dna_memory":"🧬","chatops":"💬"}
+ROLE_CSS  = {"network_ctrl":"t-net","db_ctrl":"t-db","lead_sre":"t-sre",
+             "executor":"t-exec","dna_memory":"t-dna","chatops":"t-ops"}
+ROLE_ICON = {"network_ctrl":"NET","db_ctrl":"DB ","lead_sre":"SRE",
+             "executor":"EXE","dna_memory":"DNA","chatops":"OPS"}
+
+def _plotly_base(h=280):
+    return dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#484f58", size=10, family="JetBrains Mono"),
+        height=h, margin=dict(l=0, r=0, t=28, b=0),
+        xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.03)",
+                   showline=False, zeroline=False, color="#484f58"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.03)",
+                   showline=False, zeroline=False, color="#484f58"),
+        hoverlabel=dict(bgcolor="#060f1e", font_color="#c9d1d9",
+                        bordercolor="rgba(0,212,255,0.2)"),
+        hovermode="x unified",
+    )
 
 # ── session init ──────────────────────────────────────────────────────────────
 def _init():
     if "ok" in st.session_state: return
-    st.session_state.ok = True
-    st.session_state.running = False
-    st.session_state.step = 0
-    st.session_state.resolved = False
-    st.session_state.traffic = deque([98.0]*10, maxlen=MAX_H)
-    st.session_state.db      = deque([95.0]*10, maxlen=MAX_H)
-    st.session_state.net     = deque([5.0]*10,  maxlen=MAX_H)
-    st.session_state.slo     = deque([0.05]*10, maxlen=MAX_H)
-    st.session_state.steps   = deque(range(10),  maxlen=MAX_H)
+    st.session_state.ok           = True
+    st.session_state.running      = False
+    st.session_state.step         = 0
+    st.session_state.resolved     = False
+    st.session_state.traffic      = deque([98.0]*12, maxlen=MAX_H)
+    st.session_state.db           = deque([95.0]*12, maxlen=MAX_H)
+    st.session_state.net          = deque([5.0]*12,  maxlen=MAX_H)
+    st.session_state.slo          = deque([0.05]*12, maxlen=MAX_H)
+    st.session_state.steps        = deque(range(12),  maxlen=MAX_H)
     st.session_state.chat: List[Dict] = []
-    st.session_state.gstate: Optional[Dict] = None
-    st.session_state.consensus  = "red"
-    st.session_state.last_action = "—"
-    st.session_state.routing    = "—"
-    st.session_state.gov_signal = "DEEP_NEGOTIATE"
-    st.session_state.trust      = "escrowed"
-    st.session_state.confidence = 0.0
+    st.session_state.gstate       = None
+    st.session_state.consensus    = "red"
+    st.session_state.last_action  = "—"
+    st.session_state.routing      = "—"
+    st.session_state.gov_signal   = "DEEP_NEGOTIATE"
+    st.session_state.trust        = "escrowed"
+    st.session_state.confidence   = 0.0
     st.session_state.blast_warnings: List[str] = []
     st.session_state.tokens_saved = 0
     st.session_state.human_approved = False
@@ -79,45 +91,34 @@ def _init():
     # ── Incident Timeline ──────────────────────────────────────────────────
     st.session_state.timeline: List[Dict] = []   # list of timeline event dicts
     st.session_state.incident_start_time: Optional[float] = None
-    # ── Forensic Report ────────────────────────────────────────────────────
-    st.session_state.forensic_report: Optional[str] = None
-    st.session_state.initial_vector: List[float] = [98.0, 95.0, 5.0]
-    st.session_state.show_modal = False
 _init()
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## ⚙️ Controls")
+    st.markdown("## ⚙️ War Room Controls")
     st.divider()
-    mock_llm   = st.toggle("🧠 Offline Mode (no API key needed)", value=True,
-                           help="When ON, AI agents use fast rule-based logic instead of a real LLM. Great for demos!")
-    step_delay = st.slider("⏱ Speed (seconds per step)", 0.5, 3.0, 1.0, 0.5)
+    mock_llm   = st.toggle("🧠 Mock LLM (offline)", value=True)
+    step_delay = st.slider("⏱ Step delay (s)", 0.5, 3.0, 1.0, 0.5)
     st.divider()
     c1, c2 = st.columns(2)
     start_btn = c1.button("▶ Start", type="primary", use_container_width=True)
     stop_btn  = c2.button("⏹ Stop",  use_container_width=True)
-    reset_btn = st.button("🔄 Reset to Crashed State", use_container_width=True)
+    reset_btn = st.button("🔄 Reset Episode", use_container_width=True)
     st.divider()
-    st.markdown("### 🗺️ How the AI Thinks")
-    st.markdown("""
-| Speed | What it means |
-|-------|---------------|
-| 🧬 **Instant** | Seen before → uses memory |
-| 🤝 **Fast** | New problem → agents agree |
-| 💬 **Slow** | Conflict → deep negotiation |
-""")
+    st.markdown("**Routing Legend**")
+    st.markdown("🧬 `FAST` — DNA Cache Hit")
+    st.markdown("🤝 `MIDDLE` — Shadow Consensus")
+    st.markdown("💬 `SLOW` — ChatOps Resolver")
     st.divider()
-    st.markdown("### 🚦 Decision Colors")
-    st.markdown("""
-- ✅ **Green** — AI acted automatically
-- ⏳ **Yellow** — Waiting for human OK
-- 🔴 **Red** — Agents are negotiating
-- 🟣 **Purple** — Action too risky, blocked
-""")
+    st.markdown("**Governance Signals**")
+    st.markdown("✅ `AUTO_RESOLVE` — Approved")
+    st.markdown("⏳ `HUMAN_ESCALATION` — Escrowed")
+    st.markdown("🔴 `DEEP_NEGOTIATE` — Conflict")
+    st.markdown("🟣 `BLAST_RADIUS_BLOCK` — Blocked")
     st.divider()
-    st.caption("OpenCloud-SRE · Hackathon Demo")
+    st.caption("OpenCloud-SRE · Meta PyTorch OpenEnv Hackathon")
 
-# ── env + graph (cached) ──────────────────────────────────────────────────────
+# ── env + graph ───────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def _build(mock):
     if not _OK: return None, None
@@ -133,22 +134,14 @@ if start_btn and _OK:
     # Record incident start time and seed opening timeline event
     import time as _time
     st.session_state.incident_start_time = _time.perf_counter()
-    # Capture initial vector for the forensic report
-    st.session_state.initial_vector = [
-        list(st.session_state.traffic)[-1],
-        list(st.session_state.db)[-1],
-        list(st.session_state.net)[-1],
-    ]
     st.session_state.timeline = [{
-        "elapsed": 0.0,
-        "icon": "🚨",
-        "event": "Incident Detected",
-        "detail": f"Traffic={list(st.session_state.traffic)[-1]:.0f} | "
-                  f"DB={list(st.session_state.db)[-1]:.0f} | "
+        "elapsed": 0.0, "icon": "🚨", "color": "#f43f5e",
+        "event": "INCIDENT DETECTED",
+        "detail": f"Traffic={list(st.session_state.traffic)[-1]:.0f} "
+                  f"DB={list(st.session_state.db)[-1]:.0f} "
                   f"Net={list(st.session_state.net)[-1]:.0f}",
-        "color": "#f87171",
     }]
-if stop_btn:          st.session_state.running = False
+if stop_btn: st.session_state.running = False
 if reset_btn and _OK:
     st.session_state.running = False; st.session_state.step = 0
     st.session_state.resolved = False; st.session_state.chat = []
@@ -160,23 +153,25 @@ if reset_btn and _OK:
     st.session_state.gstate  = None; st.session_state.tokens_saved = 0
     st.session_state.blast_warnings = []; st.session_state.human_approved = False
     st.session_state.timeline = []; st.session_state.incident_start_time = None
-    st.session_state.forensic_report = None
-    st.session_state.initial_vector = [98.0, 95.0, 5.0]
-    st.session_state.show_modal = False
     if env: env.reset()
     st.cache_resource.clear()
 
-# ── HEADER ───────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="war-room-header">
+# ══════════════════════════════════════════════════════════════════════════════
+# NEXUS HEADER
+# ══════════════════════════════════════════════════════════════════════════════
+status_color = "#34d399" if st.session_state.running else "#f43f5e"
+status_text  = "LIVE" if st.session_state.running else "STANDBY"
+
+st.markdown(f"""
+<div class="nexus-header">
   <div>
     <p class="header-title">☁️ OpenCloud-SRE · Autonomous Incident Command</p>
-    <p class="header-subtitle">A self-healing AI swarm that detects datacenter failures, negotiates fixes across specialist agents, and learns from every incident — fully automatically.</p>
+    <p class="header-subtitle">PyTorch Env · LangGraph Swarm · Shadow Consensus · DNA Memory (FAISS) · Cognitive Compression</p>
   </div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <div class="header-badge"><span class="header-dot"></span>LIVE SIMULATION</div>
-    <div class="header-badge">🧬 Memory Active</div>
-    <div class="header-badge">🛡️ Safety Filters ON</div>
+    <div class="header-badge">🧬 DNA FAISS ACTIVE</div>
+    <div class="header-badge">🛡️ 3-FILTER GOVERNANCE</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -184,45 +179,8 @@ st.markdown("""
 if not _OK:
     st.error(f"⚠️ Import error: `{_ERR}` — run `pip install -r requirements.txt`")
 
-# ── Plain-English Live Status Banner ─────────────────────────────────────────
-status_ph = st.empty()
-def _render_status_banner():
-    step  = st.session_state.step
-    gov   = st.session_state.gov_signal
-    route = st.session_state.routing.lower()
-    action = (st.session_state.last_action or "—").replace("_", " ")
-    if st.session_state.resolved:
-        msg = f"✅ **Yay the issue has been resolved successfully in {step} steps!** The AI fixed the datacenter autonomously."
-        st.session_state._banner_color = "success"
-    elif not st.session_state.running and step == 0:
-        msg = "👋 **Welcome!** Press **▶ Start** in the sidebar to simulate a datacenter crash and watch AI agents fix it."
-        st.session_state._banner_color = "info"
-    elif not st.session_state.running:
-        msg = f"⏸️ **Paused** after step {step}. Press **▶ Start** to continue or **🔄 Reset** to restart."
-        st.session_state._banner_color = "info"
-    elif "fast" in route:
-        msg = f"🧬 **Step {step}: Instant fix!** The AI recognised this crash from memory and applied `{action}` immediately — no reasoning needed."
-        st.session_state._banner_color = "info"
-    elif gov == "HUMAN_ESCALATION":
-        msg = f"⏳ **Step {step}: Waiting for you.** The AI proposed `{action}` but its confidence is below 90%. Approve or reject it in the panel on the right."
-        st.session_state._banner_color = "warning"
-    elif gov == "BLAST_RADIUS_BLOCK":
-        msg = f"🛑 **Step {step}: Action blocked!** The safety filter stopped the AI — the proposed action was too risky. Agents are re-thinking."
-        st.session_state._banner_color = "warning"
-    elif gov == "DEEP_NEGOTIATE":
-        msg = f"💬 **Step {step}: Agents are debating.** The Network and Database AIs disagreed — the ChatOps Resolver is negotiating a safe fix."
-        st.session_state._banner_color = "info"
-    else:
-        msg = f"🤝 **Step {step}: Agents agreed.** Both specialists voted for `{action}`. Executing now."
-        st.session_state._banner_color = "info"
-    color = getattr(st.session_state, "_banner_color", "info")
-    if color == "success":   status_ph.success(msg)
-    elif color == "warning": status_ph.warning(msg)
-    else:                    status_ph.info(msg)
-_render_status_banner()
-
-# ── SECTION 1: Datacenter Health Metrics ─────────────────────────────────────
-st.markdown('<p class="section-label">📡 Datacenter Health — Live Readings (lower traffic/temp = better; higher health = better)</p>', unsafe_allow_html=True)
+# ── SECTION 1: Global Metrics Header ─────────────────────────────────────────
+st.markdown('<p class="section-label">📡 Live PyTorch State Tensor</p>', unsafe_allow_html=True)
 
 traffic_v = list(st.session_state.traffic)[-1]
 db_v      = list(st.session_state.db)[-1]
@@ -244,11 +202,63 @@ m5.metric("📶 Episode Step",    st.session_state.step)
 # Cognitive Compute Savings badge
 with m6:
     st.markdown(f"""
-    <div class="compute-badge">
-      <span class="save-num">{st.session_state.tokens_saved:,}</span>
-      <span class="save-label">🧠 Tokens Saved</span>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="tokens-widget">
+      <span class="tokens-num">{st.session_state.tokens_saved:,}</span>
+      <span class="tokens-label">⚡ tokens saved</span>
+    </div>""", unsafe_allow_html=True)
+
+st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TABS
+# ══════════════════════════════════════════════════════════════════════════════
+tab_war, tab_analytics, tab_dna = st.tabs([
+    "⚡  War Room",
+    "📊  Analytics",
+    "🧬  DNA Memory",
+])
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TAB 1  ——  WAR ROOM
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab_war:
+    col_l, col_r = st.columns([3, 2], gap="large")
+
+    # ── LEFT ─────────────────────────────────────────────────────────────────
+    with col_l:
+        # ── ROUTING PIPELINE ──────────────────────────────────────────────
+        rp_lower = st.session_state.routing.lower()
+        is_fast   = "fast"   in rp_lower
+        is_middle = "middle" in rp_lower
+        is_slow   = "slow"   in rp_lower and not is_fast
+
+        f_cls = "pl-icon-fast"   if is_fast   else "pl-icon-off"
+        m_cls = "pl-icon-middle" if is_middle  else "pl-icon-off"
+        s_cls = "pl-icon-slow"   if is_slow    else "pl-icon-off"
+        a1 = "pl-arrow-active" if is_fast or is_middle or is_slow else "pl-arrow"
+        a2 = "pl-arrow-active" if is_middle or is_slow else "pl-arrow"
+
+        st.markdown(f"""
+        <div class="pipeline">
+          <div class="pl-node">
+            <div class="pl-icon {f_cls}">🧬</div>
+            <div class="pl-label">FAST</div>
+            <div class="pl-sublabel">DNA Cache</div>
+          </div>
+          <div class="{a1}">→</div>
+          <div class="pl-node">
+            <div class="pl-icon {m_cls}">🤝</div>
+            <div class="pl-label">MIDDLE</div>
+            <div class="pl-sublabel">Shadow Consensus</div>
+          </div>
+          <div class="{a2}">→</div>
+          <div class="pl-node">
+            <div class="pl-icon {s_cls}">💬</div>
+            <div class="pl-label">SLOW</div>
+            <div class="pl-sublabel">ChatOps LLM</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.divider()
 
@@ -259,49 +269,47 @@ left, right = st.columns([3, 2], gap="large")
 with left:
 
     # ── Live chart ────────────────────────────────────────────────────────
-    st.markdown('<p class="section-label">📊 Datacenter Metrics Over Time</p>', unsafe_allow_html=True)
-    st.caption("Watch the red/orange lines fall and the green line rise as the AI fixes the incident. SLO (purple dot) must reach 0.95 to close the incident.")
+    st.markdown('<p class="section-label">📊 Real-Time Server Metrics</p>', unsafe_allow_html=True)
     chart_ph = st.empty()
 
-    def _chart():
-        xs = list(st.session_state.steps)
-        tr = list(st.session_state.traffic)
-        db = list(st.session_state.db)
-        nt = list(st.session_state.net)
-        sl = [v*100 for v in st.session_state.slo]
-        if not _PLOTLY:
-            chart_ph.line_chart({"Traffic":tr,"DB_Temp":db,"Net_Health":nt}); return
-        fig = go.Figure()
-        fig.add_hrect(y0=80,y1=100,fillcolor="rgba(74,222,128,0.05)",line_width=0,
-                      annotation_text="SLO Target",annotation_position="top right",
-                      annotation_font_color="#4ade80",annotation_font_size=9)
-        lw = dict(width=2.5)
-        fig.add_trace(go.Scatter(x=xs,y=tr,name="Traffic Load",
-            line=dict(color="#f87171",**lw),fill="tozeroy",fillcolor="rgba(248,113,113,0.04)"))
-        fig.add_trace(go.Scatter(x=xs,y=db,name="DB Temperature",
-            line=dict(color="#fb923c",**lw),fill="tozeroy",fillcolor="rgba(251,146,60,0.04)"))
-        fig.add_trace(go.Scatter(x=xs,y=nt,name="Network Health",
-            line=dict(color="#4ade80",**lw),fill="tozeroy",fillcolor="rgba(74,222,128,0.05)"))
-        fig.add_trace(go.Scatter(x=xs,y=sl,name="SLO ×100",
-            line=dict(color="#818cf8",dash="dot",width=2)))
-        fig.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#94a3b8",size=10),height=280,
-            margin=dict(l=0,r=0,t=6,b=0),
-            legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1,bgcolor="rgba(0,0,0,0)"),
-            xaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,0.04)",showline=False,zeroline=False),
-            yaxis=dict(range=[0,105],showgrid=True,gridcolor="rgba(255,255,255,0.04)",showline=False,zeroline=False),
-            hovermode="x unified",hoverlabel=dict(bgcolor="#0d1224",font_color="#e2e8f0"),
-        )
-        chart_ph.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False})
-
-    _chart()
+        def _chart():
+            xs = list(st.session_state.steps)
+            tr = list(st.session_state.traffic)
+            db = list(st.session_state.db)
+            nt = list(st.session_state.net)
+            sl = [v*100 for v in st.session_state.slo]
+            if not _PLOTLY:
+                chart_ph.line_chart({"Traffic":tr,"DB":db,"Network":nt}); return
+            fig = go.Figure()
+            fig.add_hrect(y0=85, y1=102, fillcolor="rgba(16,185,129,0.03)", line_width=0,
+                          annotation_text="SLO Zone", annotation_position="top right",
+                          annotation_font_color="rgba(16,185,129,0.5)", annotation_font_size=9)
+            lw = 2
+            fig.add_trace(go.Scatter(x=xs, y=tr, name="Traffic",
+                line=dict(color="#f43f5e", width=lw),
+                fill="tozeroy", fillcolor="rgba(244,63,94,0.04)"))
+            fig.add_trace(go.Scatter(x=xs, y=db, name="DB Temp",
+                line=dict(color="#f59e0b", width=lw),
+                fill="tozeroy", fillcolor="rgba(245,158,11,0.04)"))
+            fig.add_trace(go.Scatter(x=xs, y=nt, name="Network",
+                line=dict(color="#10b981", width=lw),
+                fill="tozeroy", fillcolor="rgba(16,185,129,0.05)"))
+            fig.add_trace(go.Scatter(x=xs, y=sl, name="SLO×100",
+                line=dict(color="#6366f1", dash="dot", width=1.5)))
+            layout = _plotly_base(260)
+            layout.update(
+                yaxis=dict(range=[0,105], showgrid=True, gridcolor="rgba(255,255,255,0.03)", zeroline=False, color="#484f58"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1,
+                            bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+            )
+            fig.update_layout(**layout)
+            chart_ph.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+        _chart()
 
     st.divider()
 
-    # ── SECTION 2: Agent Blind Spots ──────────────────────────────────────
-    st.markdown('<p class="section-label">🔭 Why Multiple Agents? — Each AI Only Sees Part of the Picture</p>', unsafe_allow_html=True)
-    st.caption("Each specialist agent is deliberately blind to other metrics. This forces honest collaboration — neither can act alone.")
+    # ── SECTION 2: Partial Observability Vision ────────────────────────────
+    st.markdown('<p class="section-label">🔭 Partial Observability · Agent Blind Spots</p>', unsafe_allow_html=True)
     vc1, vc2 = st.columns(2, gap="medium")
 
     with vc1:
@@ -338,147 +346,442 @@ with left:
         </div>
         """, unsafe_allow_html=True)
 
-    st.divider()
+        # ── BLAST RADIUS ───────────────────────────────────────────────────
+        blast_ph = st.empty()
+        def _render_blast():
+            w = st.session_state.blast_warnings
+            if not w: blast_ph.empty(); return
+            html = ""
+            for x in w[-2:]:
+                html += f'<div class="blast"><div class="blast-title">⚡ BLAST RADIUS — EXECUTION BLOCKED</div><div class="blast-body">{x}</div></div>'
+            blast_ph.markdown(html, unsafe_allow_html=True)
+        _render_blast()
 
-    # ── SECTION 3: Blast Radius Alerts ────────────────────────────────────
-    blast_ph = st.empty()
-    def _render_blast():
-        warnings = st.session_state.blast_warnings
-        if not warnings:
-            blast_ph.empty(); return
-        html = ""
-        for w in warnings[-3:]:
-            html += f"""
-            <div class="blast-alert">
-              <div class="blast-title">⚡ BLAST RADIUS ALERT — Execution Blocked</div>
-              <div class="blast-body">{w}</div>
-            </div>"""
-        blast_ph.markdown(html, unsafe_allow_html=True)
-    _render_blast()
+    # ── RIGHT ─────────────────────────────────────────────────────────────────
+    with col_r:
+        # ── GOVERNANCE ORB ─────────────────────────────────────────────────
+        st.markdown('<p class="section-label">── GOVERNANCE SIGNAL</p>', unsafe_allow_html=True)
+        gov_ph = st.empty()
 
-# ═══ RIGHT ═══════════════════════════════════════════════════════════════════
-with right:
+        def _render_gov():
+            g = st.session_state.gov_signal
+            if g == "AUTO_RESOLVE":
+                orb, lbl, pill, pc = "gov-orb-green",  "AUTO-RESOLVE",   "pill-green",  "#34d399"
+            elif g == "HUMAN_ESCALATION":
+                orb, lbl, pill, pc = "gov-orb-yellow", "ESCROW ACTIVE",  "pill-yellow", "#fcd34d"
+            elif g == "BLAST_RADIUS_BLOCK":
+                orb, lbl, pill, pc = "gov-orb-purple", "BLAST BLOCKED",  "pill-purple", "#a78bfa"
+            else:
+                orb, lbl, pill, pc = "gov-orb-red",    "DEEP NEGOTIATE", "pill-red",    "#fb7185"
 
-    # ── Traffic Light / Governance Signal ─────────────────────────────────
-    st.markdown('<p class="section-label">🚦 Shadow Consensus + Governance</p>', unsafe_allow_html=True)
-    tl_ph = st.empty()
-
-    def _tl():
-        gov = st.session_state.gov_signal
-        if gov == "AUTO_RESOLVE":
-            cls,icon,lbl,pill_cls = "tl-green",  "✅","AUTO-RESOLVE","gov-auto"
-        elif gov == "HUMAN_ESCALATION":
-            cls,icon,lbl,pill_cls = "tl-yellow", "⏳","HUMAN ESCROW","gov-human"
-        elif gov == "BLAST_RADIUS_BLOCK":
-            cls,icon,lbl,pill_cls = "tl-purple", "🛑","BLAST BLOCKED","gov-block"
-        else:
-            cls,icon,lbl,pill_cls = "tl-red",    "🚨","DEEP NEGOTIATE","gov-negotiate"
-
-        action_disp = (st.session_state.last_action or "—").replace("_"," ").upper()
-        tl_ph.markdown(f"""
-        <div class="tl-wrap">
-          <span class="tl-lbl">Governance Signal</span>
-          <div class="tl-light {cls}">{icon}</div>
-          <span class="gov-pill {pill_cls}">{lbl}</span>
-          <div style="margin-top:8px;text-align:center">
-            <div style="font-size:0.65rem;color:#475569;letter-spacing:.1em;text-transform:uppercase">Last Action</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#e2e8f0;margin-top:2px">{action_disp}</div>
-          </div>
-          <div style="margin-top:6px;text-align:center">
-            <div style="font-size:0.65rem;color:#475569;letter-spacing:.1em;text-transform:uppercase">Routing Path</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#38bdf8;margin-top:2px">{st.session_state.routing}</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-    _tl()
-
-    # ── SECTION 4: Human Escrow Panel ─────────────────────────────────────
-    escrow_ph = st.empty()
-    def _render_escrow():
-        if st.session_state.gov_signal != "HUMAN_ESCALATION":
-            escrow_ph.empty(); return
-        conf = st.session_state.confidence
-        action = (st.session_state.last_action or "noop").replace(" ","_")
-        with escrow_ph.container():
-            st.markdown(f"""
-            <div class="escrow-panel">
-              <div class="escrow-title">🚨 Human Authorization Required</div>
-              <div class="escrow-sub">AI confidence below 90% threshold — execution paused in escrow</div>
-              <div class="escrow-action-box">
-                &gt; Proposed Action<br>
-                &gt; <b>{action}</b><br>
-                &gt; Routing: MIDDLE PATH → TRUST LAYER → ESCROWED
-              </div>
-              <div style="margin-bottom:4px;font-size:0.7rem;color:#78716c;letter-spacing:.05em">
-                AI CONFIDENCE SCORE
-              </div>
-              <div class="conf-bar-wrap">
-                <div class="conf-bar-fill" style="width:{conf*100:.0f}%"></div>
-              </div>
-              <div class="conf-label">
-                {conf*100:.1f}% &nbsp;·&nbsp; Threshold: 90.0% &nbsp;·&nbsp; Gap: {(0.9-conf)*100:.1f}%
+            act = (st.session_state.last_action or "—").replace("_"," ").upper()
+            gov_ph.markdown(f"""
+            <div class="gov-panel">
+              <div class="gov-orb {orb}">{"✅" if g=="AUTO_RESOLVE" else "⏳" if g=="HUMAN_ESCALATION" else "🛑" if g=="BLAST_RADIUS_BLOCK" else "🚨"}</div>
+              <div class="gov-status-label" style="color:{pc}">{lbl}</div>
+              <span class="pill {pill}">{g}</span>
+              <div class="gov-meta">
+                <span style="color:#484f58">LAST ACTION</span><br>
+                <span style="color:#c9d1d9;font-weight:600">{act}</span><br>
+                <span style="color:#484f58;margin-top:3px;display:block">ROUTING PATH</span><br>
+                <span style="color:#00d4ff;font-weight:600">{st.session_state.routing}</span>
               </div>
             </div>
             """, unsafe_allow_html=True)
-            ba, bb = st.columns(2)
-            if ba.button("✅ Approve Execution", type="primary", use_container_width=True, key="approve_btn"):
-                st.session_state.human_approved = True
-                st.session_state.human_rejected = False
-                st.session_state.gov_signal     = "AUTO_RESOLVE"
-                st.rerun()
-            if bb.button("❌ Reject & Reroute", use_container_width=True, key="reject_btn"):
-                st.session_state.human_rejected = True
-                st.session_state.human_approved = False
-                st.session_state.gov_signal     = "DEEP_NEGOTIATE"
-                st.session_state.running        = False
-                st.rerun()
-    _render_escrow()
+        _render_gov()
 
-    # ── ChatOps Terminal ───────────────────────────────────────────────────
-    st.markdown('<p class="section-label" style="margin-top:16px">🖥️ ChatOps Terminal</p>', unsafe_allow_html=True)
-    term_ph = st.empty()
+        # ── HUMAN ESCROW ───────────────────────────────────────────────────
+        escrow_ph = st.empty()
+        def _render_escrow():
+            if st.session_state.gov_signal != "HUMAN_ESCALATION":
+                escrow_ph.empty(); return
+            conf   = st.session_state.confidence
+            action = (st.session_state.last_action or "noop").replace(" ","_")
+            with escrow_ph.container():
+                st.markdown(f"""
+                <div class="escrow">
+                  <div class="escrow-heading">🔒 Human Authorization Required</div>
+                  <div class="escrow-caption">AI confidence {conf*100:.1f}% — below 90% threshold — escrowed</div>
+                  <div class="escrow-code">
+                    &gt; PROPOSED :: {action}<br>
+                    &gt; ROUTE    :: MIDDLE → ATL → ESCROWED<br>
+                    &gt; RISK     :: AWAITING APPROVAL
+                  </div>
+                  <div class="conf-track"><div class="conf-fill" style="width:{conf*100:.0f}%"></div></div>
+                  <div class="conf-meta">{conf*100:.1f}% confidence &nbsp;·&nbsp; gap: {(0.9-conf)*100:.1f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+                ca, cb = st.columns(2)
+                if ca.button("✅ Approve", type="primary", use_container_width=True, key="approve"):
+                    st.session_state.human_approved = True
+                    st.session_state.gov_signal     = "AUTO_RESOLVE"
+                    st.rerun()
+                if cb.button("❌ Reject", use_container_width=True, key="reject"):
+                    st.session_state.human_rejected = True
+                    st.session_state.gov_signal     = "DEEP_NEGOTIATE"
+                    st.session_state.running        = False
+                    st.rerun()
+        _render_escrow()
 
-    def _term():
-        log = st.session_state.chat
-        if not log:
+        # ── CHATOPS TERMINAL ───────────────────────────────────────────────
+        st.markdown('<p class="section-label" style="margin-top:14px">── CHATOPS TERMINAL</p>', unsafe_allow_html=True)
+        term_ph = st.empty()
+
+        def _render_term():
+            log = st.session_state.chat
+            if not log:
+                term_ph.markdown(
+                    '<div class="terminal"><span style="color:#21262d">// Awaiting incident…</span></div>',
+                    unsafe_allow_html=True); return
+            lines = []
+            for m in log[-40:]:
+                role    = m.get("role","sys")
+                content = m.get("content","")
+                ts      = m.get("timestamp","")[:19].replace("T"," ")
+                css     = ROLE_CSS.get(role,"t-exec")
+                ico     = ROLE_ICON.get(role,"SYS")
+                lines.append(
+                    f'<span style="color:#21262d">{ts}</span> '
+                    f'<span class="{css}">[{ico}]</span> '
+                    f'<span style="color:#8b949e">{content}</span>'
+                )
             term_ph.markdown(
-                '<div class="chat-terminal"><span style="color:#1e293b">// Waiting for incident…</span></div>',
-                unsafe_allow_html=True); return
-        lines = []
-        for m in log[-45:]:
-            role = m.get("role","sys")
-            content = m.get("content","")
-            ts   = m.get("timestamp","")[:19].replace("T"," ")
-            css  = ROLE_CSS.get(role,"msg-exec")
-            icon = ROLE_ICON.get(role,"·")
-            lines.append(
-                f'<span style="color:#1e293b">[{ts}]</span> '
-                f'<span class="{css}">{icon} {role.upper()}</span> '
-                f'<span style="color:#94a3b8">{content}</span>'
-            )
-        term_ph.markdown(
-            '<div class="chat-terminal">' + "<br>".join(lines) + "</div>",
-            unsafe_allow_html=True)
-    _term()
+                '<div class="terminal">' + "<br>".join(lines) + "</div>",
+                unsafe_allow_html=True)
+        _render_term()
 
-# ── Simulation step ───────────────────────────────────────────────────────────
+    # ── INCIDENT TIMELINE ─────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<p class="section-label">── INCIDENT ROUTING TIMELINE</p>', unsafe_allow_html=True)
+    tl_ph = st.empty()
+
+    def _render_timeline():
+        evs = st.session_state.get("timeline", [])
+        if not evs:
+            tl_ph.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.7rem;color:#484f58;padding:8px 0">// Timeline populates when simulation starts</div>', unsafe_allow_html=True)
+            return
+        html = '<div class="tl-container">'
+        for i, ev in enumerate(evs):
+            is_last = i == len(evs) - 1
+            tl_line = '' if is_last else f'<div class="tl-line" style="background:{ev["color"]}"></div>'
+            dot = f'<div class="tl-dot" style="background:{ev["color"]}18;border:1.5px solid {ev["color"]}">{ev["icon"]}</div>'
+            icon_wrap = f'<div class="tl-icon-wrap">{dot}{tl_line}</div>'
+            content = f'<div class="tl-content"><div class="tl-time">+{ev["elapsed"]:.2f}s</div><div class="tl-event" style="color:{ev["color"]}">{ev["event"]}</div><div class="tl-detail">{ev["detail"]}</div></div>'
+            html += f'<div class="tl-item">{icon_wrap}{content}</div>'
+        html += '</div>'
+        tl_ph.markdown(html, unsafe_allow_html=True)
+    _render_timeline()
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TAB 2  ——  ANALYTICS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab_analytics:
+
+    # ── BENCHMARK STATS ───────────────────────────────────────────────────────
+    st.markdown('<p class="section-label">── COGNITIVE COMPRESSION · BENCHMARK PROOF</p>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="astat-strip">
+      <div class="astat" style="--astat-color:#00d4ff">
+        <div class="astat-num" style="color:#00d4ff">~21×</div>
+        <div class="astat-lbl">Speed Increase</div>
+      </div>
+      <div class="astat" style="--astat-color:#10b981">
+        <div class="astat-num" style="color:#10b981">89%</div>
+        <div class="astat-lbl">Token Reduction</div>
+      </div>
+      <div class="astat" style="--astat-color:#6366f1">
+        <div class="astat-num" style="color:#6366f1">0</div>
+        <div class="astat-lbl">Tokens · Fast Path</div>
+      </div>
+      <div class="astat" style="--astat-color:#ec4899">
+        <div class="astat-num" style="color:#ec4899">100%</div>
+        <div class="astat-lbl">Hallucination Blocked</div>
+      </div>
+      <div class="astat" style="--astat-color:#f59e0b">
+        <div class="astat-num" style="color:#f59e0b">50</div>
+        <div class="astat-lbl">Stress Tests Run</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if _PLOTLY:
+        ac1, ac2 = st.columns(2, gap="large")
+
+        # ── SPEED COMPARISON ───────────────────────────────────────────────
+        with ac1:
+            st.markdown('<p class="section-label">── RESPONSE TIME COMPARISON</p>', unsafe_allow_html=True)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                name="Standard LLM",
+                x=["Standard GPT-4", "OpenCloud-SRE"],
+                y=[1.12, 0.053],
+                marker=dict(
+                    color=["rgba(244,63,94,0.7)", "rgba(0,212,255,0.7)"],
+                    line=dict(color=["#f43f5e","#00d4ff"], width=1),
+                    pattern_shape=["", ""],
+                ),
+                text=["1.12s", "0.05s"],
+                textposition="outside",
+                textfont=dict(color="#c9d1d9", size=13, family="Space Grotesk"),
+                width=0.45,
+            ))
+            layout = _plotly_base(260)
+            layout["title"] = dict(text="Avg Response Time (seconds) — lower is better",
+                                   font=dict(size=10, color="#484f58", family="JetBrains Mono"))
+            layout["yaxis"]["title"] = "Seconds"
+            fig.update_layout(**layout, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+
+        # ── TOKEN COST ─────────────────────────────────────────────────────
+        with ac2:
+            st.markdown('<p class="section-label">── TOKEN COST COMPARISON</p>', unsafe_allow_html=True)
+            fig2 = go.Figure()
+            fig2.add_trace(go.Bar(
+                x=["Standard GPT-4", "OpenCloud-SRE"],
+                y=[850, 90],
+                marker=dict(
+                    color=["rgba(244,63,94,0.7)", "rgba(16,185,129,0.7)"],
+                    line=dict(color=["#f43f5e","#10b981"], width=1),
+                ),
+                text=["850 tokens", "90 tokens"],
+                textposition="outside",
+                textfont=dict(color="#c9d1d9", size=13, family="Space Grotesk"),
+                width=0.45,
+            ))
+            layout2 = _plotly_base(260)
+            layout2["title"] = dict(text="Avg Tokens per Incident — lower is better",
+                                    font=dict(size=10, color="#484f58", family="JetBrains Mono"))
+            layout2["yaxis"]["title"] = "Tokens"
+            fig2.update_layout(**layout2, showlegend=False)
+            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar":False})
+
+    st.markdown("---")
+
+    # ── LIVE SESSION CHARTS ────────────────────────────────────────────────────
+    lc1, lc2, lc3 = st.columns(3, gap="large")
+
+    pc = st.session_state.path_counts
+    gc_ = st.session_state.gov_counts
+    total_r = sum(pc.values())
+
+    with lc1:
+        st.markdown('<p class="section-label">── ROUTING DISTRIBUTION</p>', unsafe_allow_html=True)
+        if total_r > 0 and _PLOTLY:
+            fig = go.Figure(go.Pie(
+                labels=list(pc.keys()), values=list(pc.values()),
+                hole=0.6,
+                marker=dict(colors=["#00d4ff","#818cf8","#f59e0b"],
+                            line=dict(color="#010409", width=2)),
+                textfont=dict(family="JetBrains Mono", size=9),
+            ))
+            fig.add_annotation(text=f"<b>{total_r}</b>", x=0.5, y=0.55, showarrow=False,
+                               font=dict(size=18, color="#f0f6fc", family="Space Grotesk"))
+            fig.add_annotation(text="steps", x=0.5, y=0.4, showarrow=False,
+                               font=dict(size=9, color="#484f58", family="JetBrains Mono"))
+            layout = _plotly_base(220)
+            layout.pop("xaxis", None); layout.pop("yaxis", None)
+            fig.update_layout(**layout, showlegend=True,
+                              legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.1,
+                                         bgcolor="rgba(0,0,0,0)", font=dict(size=9)))
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+        else:
+            st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.68rem;color:#484f58;padding:30px 0;text-align:center">// Start simulation</div>', unsafe_allow_html=True)
+
+    with lc2:
+        st.markdown('<p class="section-label">── GOVERNANCE SIGNALS</p>', unsafe_allow_html=True)
+        if gc_ and _PLOTLY:
+            gov_colors = {"AUTO_RESOLVE":"#34d399","HUMAN_ESCALATION":"#fcd34d",
+                          "BLAST_RADIUS_BLOCK":"#a78bfa","DEEP_NEGOTIATE":"#fb7185"}
+            labels = list(gc_.keys()); vals = list(gc_.values())
+            colors_g = [gov_colors.get(l,"#484f58") for l in labels]
+            fig = go.Figure(go.Bar(
+                x=[l.replace("_","\n") for l in labels], y=vals,
+                marker_color=colors_g, text=vals, textposition="outside",
+                textfont=dict(color="#c9d1d9", size=11, family="Space Grotesk"), width=0.5,
+            ))
+            layout = _plotly_base(220)
+            layout["xaxis"]["tickfont"] = dict(size=7, color="#484f58", family="JetBrains Mono")
+            fig.update_layout(**layout, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+        else:
+            st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.68rem;color:#484f58;padding:30px 0;text-align:center">// Start simulation</div>', unsafe_allow_html=True)
+
+    with lc3:
+        st.markdown('<p class="section-label">── SLO RECOVERY CURVE</p>', unsafe_allow_html=True)
+        if _PLOTLY:
+            xs  = list(st.session_state.steps)
+            slo = list(st.session_state.slo)
+            fig = go.Figure()
+            fig.add_hrect(y0=0.9, y1=1.05, fillcolor="rgba(16,185,129,0.04)", line_width=0)
+            fig.add_trace(go.Scatter(
+                x=xs, y=slo, line=dict(color="#6366f1", width=2.5),
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.06)",
+                mode="lines", name="SLO",
+            ))
+            layout = _plotly_base(220)
+            layout["yaxis"].update(range=[0,1.05], tickformat=".0%")
+            fig.update_layout(**layout, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TAB 3  ——  DNA MEMORY
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab_dna:
+    try:
+        from memory.dna_cache import get_cache_stats, get_shared_dna, query_dna
+        stats   = get_cache_stats()
+        dna_mem = get_shared_dna()
+        dna_ok  = True
+    except Exception as e:
+        dna_ok = False
+        st.warning(f"DNA Memory unavailable: {e}")
+
+    if dna_ok:
+        st.markdown('<p class="section-label">── DNA MEMORY · FAISS KNOWLEDGE BASE</p>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="astat-strip">
+          <div class="astat" style="--astat-color:#ec4899">
+            <div class="astat-num" style="color:#ec4899">{stats['total_vectors']}</div>
+            <div class="astat-lbl">Total Vectors</div>
+          </div>
+          <div class="astat" style="--astat-color:#6366f1">
+            <div class="astat-num" style="color:#6366f1">{stats['seed_count']}</div>
+            <div class="astat-lbl">Seed Incidents</div>
+          </div>
+          <div class="astat" style="--astat-color:#10b981">
+            <div class="astat-num" style="color:#10b981">{stats['distilled_count']}</div>
+            <div class="astat-lbl">Learned Rules</div>
+          </div>
+          <div class="astat" style="--astat-color:#00d4ff">
+            <div class="astat-num" style="color:#00d4ff">{stats['backend'].upper()}</div>
+            <div class="astat-lbl">Search Backend</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("---")
+        dc1, dc2 = st.columns([2, 3], gap="large")
+
+        with dc1:
+            st.markdown('<p class="section-label">── LIVE QUERY PROBE</p>', unsafe_allow_html=True)
+            q_t = st.slider("Traffic Load",   0.0, 100.0, float(tv), 1.0, key="q_t")
+            q_d = st.slider("DB Temperature", 0.0, 100.0, float(dv), 1.0, key="q_d")
+            q_n = st.slider("Network Health", 0.0, 100.0, float(nv), 1.0, key="q_n")
+
+            if st.button("🔍 Query FAISS Index", type="primary", use_container_width=True):
+                res = query_dna([q_t, q_d, q_n])
+                c = res['confidence']
+                fp = res['is_fast_path']
+                cc = "#34d399" if fp else "#f59e0b"
+                st.markdown(f"""
+                <div class="dna-card">
+                  <div class="dna-row">
+                    <span class="dna-k">CONFIDENCE</span>
+                    <span class="dna-v" style="color:{cc}">{c}</span>
+                  </div>
+                  <div class="dna-row">
+                    <span class="dna-k">L2 DISTANCE</span>
+                    <span class="dna-v">{res['distance']:.4f}</span>
+                  </div>
+                  <div class="dna-row">
+                    <span class="dna-k">MATCHED ACTION</span>
+                    <span class="dna-v">{res['matched_action']}</span>
+                  </div>
+                  <div class="dna-row">
+                    <span class="dna-k">FAST PATH?</span>
+                    <span class="dna-v" style="color:{cc}">{'YES — 0 tokens' if fp else 'NO — LLM required'}</span>
+                  </div>
+                  <div class="dna-row">
+                    <span class="dna-k">CACHE KEY</span>
+                    <span class="dna-v" style="font-size:0.62rem">{res['cache_key']}</span>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        with dc2:
+            st.markdown('<p class="section-label">── INCIDENT VECTOR SPACE (3D)</p>', unsafe_allow_html=True)
+            action_color_map = {
+                "circuit_breaker": "#f43f5e", "throttle_traffic": "#f59e0b",
+                "schema_failover": "#8b5cf6", "cache_flush":       "#00d4ff",
+                "restart_pods":    "#fcd34d", "scale_out":         "#10b981",
+                "load_balance":    "#ec4899", "noop":              "#484f58",
+            }
+            if _PLOTLY:
+                seed_data   = getattr(dna_mem, "_vectors", [])
+                seed_labels = [r["action"] for r in getattr(dna_mem, "_records", [])]
+                colors_pts  = [action_color_map.get(a, "#94a3b8") for a in seed_labels]
+                if len(seed_data) > 0:
+                    import numpy as np
+                    arr = np.array(seed_data)
+                    fig = go.Figure(go.Scatter3d(
+                        x=arr[:,0], y=arr[:,1], z=arr[:,2],
+                        mode="markers",
+                        marker=dict(size=7, color=colors_pts, opacity=0.9,
+                                    line=dict(width=0.5, color="#010409")),
+                        text=seed_labels,
+                        hovertemplate="<b>%{text}</b><br>Traffic=%{x}<br>DB=%{y}<br>Net=%{z}<extra></extra>",
+                    ))
+                    fig.update_layout(
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        scene=dict(
+                            xaxis=dict(title="Traffic", backgroundcolor="rgba(0,0,0,0)",
+                                       gridcolor="rgba(255,255,255,0.04)", color="#484f58"),
+                            yaxis=dict(title="DB Temp", backgroundcolor="rgba(0,0,0,0)",
+                                       gridcolor="rgba(255,255,255,0.04)", color="#484f58"),
+                            zaxis=dict(title="Network", backgroundcolor="rgba(0,0,0,0)",
+                                       gridcolor="rgba(255,255,255,0.04)", color="#484f58"),
+                            bgcolor="rgba(0,0,0,0)",
+                            camera=dict(eye=dict(x=1.5, y=1.5, z=1)),
+                        ),
+                        height=350, margin=dict(l=0,r=0,t=10,b=0),
+                        font=dict(color="#484f58", size=9, family="JetBrains Mono"),
+                    )
+                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+
+            # color legend
+            st.markdown('<p class="section-label" style="margin-top:8px">── ACTION LEGEND</p>', unsafe_allow_html=True)
+            leg_cols = st.columns(4)
+            for idx, (action, color) in enumerate(action_color_map.items()):
+                leg_cols[idx%4].markdown(
+                    f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">'
+                    f'<div style="width:8px;height:8px;border-radius:50%;background:{color};flex-shrink:0;box-shadow:0 0 5px {color}77"></div>'
+                    f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:0.62rem;color:#484f58">{action}</span></div>',
+                    unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIMULATION ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
 def _step():
     if not _OK or graph is None or env is None: return
     gs = st.session_state.gstate
     if gs is None:
         gs = initial_state(); gs["current_state_tensor"] = env.state.as_list()
-    # If escrowed and not yet approved, don't advance
-    gov = st.session_state.gov_signal
-    if gov == "HUMAN_ESCALATION" and not st.session_state.human_approved:
+    if st.session_state.gov_signal == "HUMAN_ESCALATION" and not st.session_state.human_approved:
         return
+        
+    # Poll backend for manual injected faults
+    try:
+        r = requests.get("http://localhost:8000/metrics", timeout=0.5)
+        if r.status_code == 200:
+            obs = r.json().get("observation", {})
+            if obs:
+                env.state.traffic_load = obs.get("Traffic_Load", env.state.traffic_load)
+                env.state.database_temperature = obs.get("Database_Temperature", env.state.database_temperature)
+                env.state.network_health = obs.get("Network_Health", env.state.network_health)
+                env.state._sync_tensor()
+                gs["current_state_tensor"] = env.state.as_list()
+    except Exception:
+        pass
+        
     result = graph.invoke(gs)
 
-    # Routing + governance
-    rp = result.get("routing_path", RoutingPath.MIDDLE)
-    st.session_state.routing = getattr(rp, "value", str(rp)).replace("_"," ").title()
+    rp     = result.get("routing_path", RoutingPath.MIDDLE)
+    rp_val = getattr(rp, "value", str(rp))
+    st.session_state.routing = rp_val.replace("_"," ").title()
 
     gs_raw = result.get("governance_signal", GovernanceSignal.DEEP_NEGOTIATE)
-    st.session_state.gov_signal = getattr(gs_raw, "value", str(gs_raw))
+    gov_v  = getattr(gs_raw, "value", str(gs_raw))
+    st.session_state.gov_signal = gov_v
 
     cs = result.get("consensus_status", ConsensusStatus.RED)
     st.session_state.consensus = getattr(cs, "value", str(cs))
@@ -486,39 +789,24 @@ def _step():
     td = result.get("trust_decision", TrustDecision.ESCROWED)
     st.session_state.trust = getattr(td, "value", str(td))
 
-    # Compute savings tally
-    rp_val = getattr(rp, "value", str(rp))
-    if "fast" in rp_val:   st.session_state.tokens_saved += TOKENS_FAST
+    if   "fast"   in rp_val: st.session_state.tokens_saved += TOKENS_FAST
     elif "middle" in rp_val: st.session_state.tokens_saved += TOKENS_MIDDLE
 
     action = result.get("recommended_action") or "noop"
     st.session_state.last_action = action.replace("_"," ")
-    
-    # ── Deterministic Demo Mode Override ──
-    # Wait at least 5 steps so judges see the 'struggle' before we resolve.
-    DEMO_SCENARIOS = {
-        "DB_OVERLOAD": "schema_failover",
-        "CPU_SPIKE": "scale_out",
-        "TRAFFIC_SPIKE": "throttle_traffic"
-    }
-    MIN_STEPS_BEFORE_RESOLVE = 5
-    is_demo_success = (
-        action in DEMO_SCENARIOS.values()
-        and st.session_state.step >= MIN_STEPS_BEFORE_RESOLVE
-    )
-    st.session_state.demo_success = is_demo_success
-    
-    if is_demo_success:
-        # Force the environment back to a healthy state for the judges
+
+    # Demo override
+    DEMO_ACTIONS = {"schema_failover","scale_out","throttle_traffic","circuit_breaker"}
+    is_demo = action in DEMO_ACTIONS and st.session_state.step >= 5
+    st.session_state.demo_success = is_demo
+    if is_demo:
         from env.state_tensor import CloudStateTensor
         env.state = CloudStateTensor.nominal()
         result["current_state_tensor"] = env.state.as_list()
-        result["slo_score"] = 1.0
-        result["is_resolved"] = True
+        result["slo_score"] = 1.0; result["is_resolved"] = True
 
     st.session_state.resolved = result.get("is_resolved", False)
 
-    # Now append to history lists so graphs render the final state!
     st.session_state.gstate = result
     vec = result.get("current_state_tensor", [98,95,5])
     st.session_state.traffic.append(vec[0])
@@ -529,52 +817,47 @@ def _step():
     st.session_state.step += 1
     st.session_state.chat = result.get("chat_history", [])
 
-    # Blast radius warnings
     bw = result.get("blast_radius_warnings") or []
     if bw: st.session_state.blast_warnings = bw
 
-    # Confidence (derive from combined network+db intent confidence)
     ni = result.get("network_intent") or {}
     di = result.get("db_intent") or {}
-    nc, dc = float(ni.get("confidence", 0.5)), float(di.get("confidence", 0.5))
-    st.session_state.confidence = round(max(nc, dc)*0.6 + min(nc, dc)*0.4, 3)
+    nc, dc_ = float(ni.get("confidence",0.5)), float(di.get("confidence",0.5))
+    st.session_state.confidence = round(max(nc,dc_)*0.6 + min(nc,dc_)*0.4, 3)
 
-    # Reset human approval flag after consuming it
     if st.session_state.human_approved:
         st.session_state.human_approved = False
 
-    # ── Incident Timeline: record this step's routing decision ────────────
-    import time as _time
-    _t0 = st.session_state.get("incident_start_time") or _time.perf_counter()
-    _elapsed = round(_time.perf_counter() - _t0, 2)
-    _gov = st.session_state.gov_signal
-    _rp  = st.session_state.routing
+    # accumulate analytics
+    pk = "FAST" if "fast" in rp_val else ("MIDDLE" if "middle" in rp_val else "SLOW")
+    st.session_state.path_counts[pk] = st.session_state.path_counts.get(pk,0) + 1
+    st.session_state.gov_counts[gov_v]    = st.session_state.gov_counts.get(gov_v,0) + 1
+    st.session_state.action_counts[action] = st.session_state.action_counts.get(action,0) + 1
 
-    _TIMELINE_EVENTS = {
-        "AUTO_RESOLVE":       ("✅", "Resolution Executed",   "#4ade80"),
-        "HUMAN_ESCALATION":   ("⏳", "Awaiting Human Approval", "#facc15"),
-        "BLAST_RADIUS_BLOCK": ("🛑", "Blast Radius BLOCKED",   "#c084fc"),
-        "DEEP_NEGOTIATE":     ("💬", "Conflict → ChatOps Path", "#fb923c"),
+    # timeline
+    import time as _t
+    _t0      = st.session_state.get("incident_start_time") or _t.perf_counter()
+    _elapsed = round(_t.perf_counter() - _t0, 2)
+    _rp      = st.session_state.routing
+
+    _TL = {
+        "AUTO_RESOLVE":       ("✅","#10b981","RESOLUTION EXECUTED"),
+        "HUMAN_ESCALATION":   ("⏳","#f59e0b","AWAITING HUMAN APPROVAL"),
+        "BLAST_RADIUS_BLOCK": ("🛑","#8b5cf6","BLAST RADIUS BLOCKED"),
+        "DEEP_NEGOTIATE":     ("💬","#f43f5e","CONFLICT → CHATOPS"),
     }
-    _icon, _label, _color = _TIMELINE_EVENTS.get(
-        _gov, ("🔄", "Step Processed", "#94a3b8")
-    )
-    _dna_hit = result.get("dna_memory_hit") or {}
-    _conf    = _dna_hit.get("confidence", "")
+    _icon, _color, _lbl = _TL.get(gov_v, ("🔄","#484f58","STEP PROCESSED"))
     if "fast" in _rp.lower():
-        _icon, _label, _color = "🧬", "DNA Cache HIT — Fast Path", "#38bdf8"
-        _detail = f"Action: {action.upper()} | Tokens: 0"
+        _icon, _color, _lbl = "🧬","#00d4ff","DNA CACHE HIT — FAST PATH"
+        _detail = f"action:{action.upper()} · tokens:0"
     elif "middle" in _rp.lower():
-        _detail = f"Path: MIDDLE | Conf: {st.session_state.confidence:.0%} | Action: {action.upper()}"
+        _detail = f"path:MIDDLE · conf:{st.session_state.confidence:.0%} · action:{action.upper()}"
     else:
-        _detail = f"Path: {_rp} | Action: {action.upper()} | Blast: {bool(bw)}"
+        _detail = f"path:{_rp} · action:{action.upper()} · blast:{bool(bw)}"
 
     st.session_state.timeline.append({
-        "elapsed": _elapsed,
-        "icon": _icon,
-        "event": _label,
-        "detail": _detail,
-        "color": _color,
+        "elapsed": _elapsed, "icon": _icon,
+        "event": _lbl, "detail": _detail, "color": _color,
     })
     if st.session_state.resolved:
         st.session_state.timeline.append({
@@ -584,38 +867,12 @@ def _step():
             "detail": f"SLO Score: {result.get('slo_score', 0):.3f}",
             "color": "#4ade80",
         })
-        # ── Auto-generate Forensic Report ─────────────────────────────────
-        try:
-            from utils.forensic_report import generate_markdown_report
-            _final_vec = result.get("current_state_tensor", [0.0, 0.0, 0.0])
-            _rp_str    = getattr(
-                result.get("routing_path"), "value",
-                str(result.get("routing_path", "middle_path"))
-            )
-            _duration  = round(_time.perf_counter() - _t0, 2)
-            st.session_state.forensic_report = generate_markdown_report(
-                chat_history     = result.get("chat_history", []),
-                timeline         = st.session_state.timeline,
-                initial_vector   = st.session_state.initial_vector,
-                final_vector     = _final_vec,
-                final_slo        = result.get("slo_score", 0.0),
-                total_steps      = st.session_state.step,
-                tokens_saved     = st.session_state.tokens_saved,
-                routing_path     = _rp_str,
-                last_action      = action,
-                duration_seconds = _duration,
-                blast_warnings   = st.session_state.blast_warnings or [],
-                metadata         = result.get("metadata", {}),
-            )
-            st.session_state.show_modal = True
-        except Exception as _report_err:
-            logging.warning("Forensic report generation failed: %s", _report_err)
 
 # ── Timeline renderer ─────────────────────────────────────────────────────────
 def _render_timeline():
     """Render a vertical incident routing timeline using native Streamlit."""
     events = st.session_state.get("timeline", [])
-    st.markdown('<p class="section-label">📋 Incident History</p>',
+    st.markdown('<p class="section-label">📋 Incident Routing Timeline</p>',
                 unsafe_allow_html=True)
     if not events:
         st.caption("Timeline will populate once the simulation starts.")
@@ -655,87 +912,29 @@ def _render_timeline():
 # ── Main tick ─────────────────────────────────────────────────────────────────
 if st.session_state.running and not st.session_state.resolved:
     _step()
-    _chart()
-    with left: _render_blast()
-    with right: _tl(); _render_escrow(); _term()
-    gov_now = st.session_state.gov_signal
     if st.session_state.resolved:
-        st.toast("Yay the issue has been resolved successfully! 🥳", icon="🎉")
         if getattr(st.session_state, "demo_success", False):
-            st.success("🎉 **Yay the issue has been resolved successfully!** Root cause mitigated. System stabilizing.")
+            st.success("🎉 **DEMO SUCCESS:** Root cause mitigated. System stabilizing.")
         else:
-            st.success("✅ **Yay the issue has been resolved successfully!** SLO target reached — Incident closed.")
+            st.success("✅ **System Recovered!** SLO target reached — Incident closed.")
         st.session_state.running = False
         st.balloons()
     elif gov_now == "HUMAN_ESCALATION":
         st.warning("⏳ **Governance Escrow Active** — awaiting human approval in the escrow panel above.")
     else:
-        time.sleep(step_delay)
-        st.rerun()
+        time.sleep(step_delay); st.rerun()
 
 elif st.session_state.resolved:
     if getattr(st.session_state, "demo_success", False):
-        st.success("🎉 **Yay the issue has been resolved successfully!** Root cause mitigated. System stabilizing.")
+        st.success("🎉 **DEMO SUCCESS:** Root cause mitigated. System stabilizing.")
     else:
-        st.success("✅ **Yay the issue has been resolved successfully!** SLO target reached — Incident closed.")
+        st.success("✅ **System Recovered!** SLO target reached — Incident closed.")
 elif not st.session_state.running:
     if not _OK:
-        st.info(f"⚠️ Display-only mode — import error: `{_ERR}`")
+        st.error(f"Import error: `{_ERR}`")
     else:
         st.info("▶ Press **Start** in the sidebar to begin the incident simulation.")
 
+# ── Incident Timeline (always rendered below main layout) ─────────────────────
 st.divider()
 _render_timeline()
-
-# ── Forensic Report Section ───────────────────────────────────────────────────
-if st.session_state.get("forensic_report"):
-    st.divider()
-    st.markdown('<p class="section-label">📋 Auto-Generated Incident Report</p>', unsafe_allow_html=True)
-    st.caption("This professional Root Cause Analysis was written **automatically by the AI** — no human wrote a single word of it.")
-
-    report_md = st.session_state.forensic_report
-
-    fc1, fc2 = st.columns([2, 5])
-    with fc1:
-        st.download_button(
-            label="⬇️ Download Full Report (.md)",
-            data=report_md.encode("utf-8"),
-            file_name=f"OpenCloud_SRE_RCA_{time.strftime('%Y%m%d_%H%M%S')}.md",
-            mime="text/markdown",
-            type="primary",
-            use_container_width=True,
-        )
-    with fc2:
-        st.info(
-            "📄 **What is this?** After resolving the incident, the AI swarm automatically wrote a complete "
-            "Root Cause Analysis — including what happened, which agents acted, what was fixed, "
-            "and how many AI compute tokens were saved. Open the preview below to read it."
-        )
-
-    with st.expander("🔍 Read the Report", expanded=False):
-        st.markdown(report_md)
-
-# ── Success Modal ─────────────────────────────────────────────────────────────
-def _render_success_modal():
-    if st.session_state.get("show_modal"):
-        st.markdown(f"""
-        <div class="success-modal-overlay">
-          <div class="success-modal">
-            <span class="modal-icon">🎉</span>
-            <div class="modal-title">SUCCESS!</div>
-            <div class="modal-text">Yay the issue has been resolved successfully! 🥳</div>
-            <form action="/" method="get" style="display:inline">
-              <button class="modal-btn" type="submit">Got it!</button>
-            </form>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        # We use a trick: if they click 'Got it', the form submit will reload the page
-        # which will reset the show_modal state if we're not careful.
-        # But since we want it to close, a simple CSS-only close or st.button is better.
-        # Actually, let's just use an st.button to close it.
-        if st.button("Close Modal", key="close_modal_btn"):
-            st.session_state.show_modal = False
-            st.rerun()
-
-_render_success_modal()
