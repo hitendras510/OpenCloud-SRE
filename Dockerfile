@@ -82,12 +82,12 @@ CMD ["/bin/bash", "-c", "\
         --output models/sft_model \
         --epochs 2; \
     echo '🤖 Stage 3: Starting OpenEnv server...'; \
-    uvicorn env.server:app --host 0.0.0.0 --port 8001 & \
+    uvicorn env.server:app --host 0.0.0.0 --port 8000 & \
     sleep 10; \
     echo '🎯 Stage 3: GRPO RL training...'; \
     python -m training.rl.grpo_trainer \
         --model models/sft_model \
-        --env-url http://localhost:8001 \
+        --env-url http://localhost:8000 \
         --epochs ${RL_EPOCHS:-3} \
         --steps ${RL_STEPS:-50} \
         --output models/rl_model \
