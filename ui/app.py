@@ -1,6 +1,6 @@
 """ui/app.py — OpenCloud-SRE NEXUS Command Center v3.0"""
 from __future__ import annotations
-import sys, time, logging
+import sys, time, logging, requests
 from pathlib import Path
 from collections import deque
 from typing import Dict, List, Optional
@@ -147,7 +147,30 @@ with st.sidebar:
       <div style="font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:#fb7185">🚨 DEEP_NEGOTIATE</div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:#a78bfa">🛑 BLAST_RADIUS_BLOCK</div>
     </div>
+    </div>
     """, unsafe_allow_html=True)
+    st.divider()
+    
+    st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.62rem;color:#f43f5e;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">🔴 Chaos Control Center</div>', unsafe_allow_html=True)
+    if st.button("Inject CPU Spike", use_container_width=True):
+        try:
+            requests.post("http://localhost:8000/inject-fault", json={"fault_type": "CPU_SPIKE", "value": 95}, timeout=2)
+            st.toast("🔴 CPU Spike Injected!")
+        except Exception as e:
+            st.toast(f"Error injecting fault: {e}")
+    if st.button("Simulate Network Partition", use_container_width=True):
+        try:
+            requests.post("http://localhost:8000/inject-fault", json={"fault_type": "NETWORK_PARTITION", "value": 95}, timeout=2)
+            st.toast("🔴 Network Partition Simulated!")
+        except Exception as e:
+            st.toast(f"Error injecting fault: {e}")
+    if st.button("Trigger DB Deadlock", use_container_width=True):
+        try:
+            requests.post("http://localhost:8000/inject-fault", json={"fault_type": "DB_DEADLOCK", "value": 95}, timeout=2)
+            st.toast("🔴 DB Deadlock Triggered!")
+        except Exception as e:
+            st.toast(f"Error injecting fault: {e}")
+            
     st.divider()
     st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.58rem;color:#484f58;text-align:center;letter-spacing:.06em">OpenCloud-SRE · Cognitive Compression<br>Meta PyTorch · Hackathon 2025</div>', unsafe_allow_html=True)
 
@@ -792,6 +815,21 @@ def _step():
         gs = initial_state(); gs["current_state_tensor"] = env.state.as_list()
     if st.session_state.gov_signal == "HUMAN_ESCALATION" and not st.session_state.human_approved:
         return
+        
+    # Poll backend for manual injected faults
+    try:
+        r = requests.get("http://localhost:8000/metrics", timeout=0.5)
+        if r.status_code == 200:
+            obs = r.json().get("observation", {})
+            if obs:
+                env.state.traffic_load = obs.get("Traffic_Load", env.state.traffic_load)
+                env.state.database_temperature = obs.get("Database_Temperature", env.state.database_temperature)
+                env.state.network_health = obs.get("Network_Health", env.state.network_health)
+                env.state._sync_tensor()
+                gs["current_state_tensor"] = env.state.as_list()
+    except Exception:
+        pass
+        
     result = graph.invoke(gs)
 
     rp     = result.get("routing_path", RoutingPath.MIDDLE)

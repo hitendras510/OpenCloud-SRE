@@ -224,6 +224,45 @@ def get_state() -> Dict[str, Any]:
     }
 
 
+@app.get("/metrics")
+def get_metrics() -> Dict[str, Any]:
+    """Return current environment metrics for polling."""
+    env = _get_env()
+    return {
+        "observation": _obs_to_dict(env._observe(), env, env._step_count),
+    }
+
+
+class FaultRequest(BaseModel):
+    fault_type: str
+    value: Optional[float] = None
+
+
+@app.post("/inject-fault")
+def inject_fault_post(req: FaultRequest) -> Dict[str, Any]:
+    """Inject a specific fault via JSON body for Chaos Control Center."""
+    env = _get_env()
+    ft = req.fault_type.upper()
+    
+    val = req.value if req.value is not None else 95.0
+    if ft == "CPU_SPIKE":
+        env.state.traffic_load = val
+    elif ft == "NETWORK_PARTITION":
+        env.state.network_health = 100.0 - val if req.value is not None else 5.0
+    elif ft == "DB_DEADLOCK":
+        env.state.database_temperature = val
+    else:
+        try:
+            env.inject_fault(req.fault_type.lower())
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+            
+    # Force tensor sync
+    env.state._sync_tensor()
+    return {"status": "injected", "fault_type": req.fault_type,
+            "observation": _obs_to_dict(env._observe(), env, env._step_count)}
+
+
 @app.post("/inject_fault")
 def inject_fault(fault_type: str = "traffic_spike") -> Dict[str, Any]:
     """
