@@ -111,11 +111,12 @@ def run_episode(
                 temperature=temperature,
                 do_sample=True,
                 num_return_sequences=group_size,
-                pad_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,  # FIX BUG-5
             )
 
+        prompt_len  = inp["input_ids"].shape[1]  # FIX BUG-6: precompute once
         completions = [
-            tokenizer.decode(o[inp["input_ids"].shape[1]:], skip_special_tokens=True)
+            tokenizer.decode(o[prompt_len:], skip_special_tokens=True)
             for o in outs
         ]
 
@@ -134,13 +135,18 @@ def run_episode(
 
         # Group-relative advantages
         r_t = torch.tensor(rewards, dtype=torch.float32)
-        adv = ((r_t - r_t.mean()) / (r_t.std().clamp(min=1e-8))).tolist()
+        std = r_t.std()
+        if std < 1e-8:
+            adv = [0.0] * len(rewards)  # all identical → skip gradient
+        else:
+            adv = ((r_t - r_t.mean()) / std.clamp(min=1e-8)).tolist()
 
         best_idx = rewards.index(max(rewards))
         best_obs = next_obs_list[best_idx]
 
         records.append({
             "prompt":            prompt,
+            "prompt_len":        prompt_len,       # FIX BUG-6
             "completions":       completions,
             "rewards":           rewards,
             "advantages":        adv,
@@ -150,7 +156,9 @@ def run_episode(
         })
 
         obs  = best_obs
-        done = best_obs.get("terminated", False) or best_obs.get("truncated", False)
+        # FIX BUG-4: read terminated/truncated from top-level server response
+        done = bool(best_obs.get("terminated", False)) or \
+               bool(best_obs.get("truncated", False))
 
     return records
 
@@ -174,11 +182,16 @@ def grpo_update(
 
     opt = AdamW(model.parameters(), lr=learning_rate)
     model.train()
+    optimizer_zero = True
     total_loss = 0.0
     n = 0
 
     for rec in records:
-        for comp, adv in zip(rec["completions"], rec["advantages"]):
+        plen = rec.get("prompt_len")  # FIX BUG-6: use precomputed length
+        for comp, adv_val in zip(rec["completions"], rec["advantages"]):
+            if adv_val == 0.0:
+                continue  # skip zero-advantage completions
+
             full = rec["prompt"] + comp
             enc  = tokenizer(
                 full,
@@ -188,14 +201,20 @@ def grpo_update(
             ).to(model.device)
 
             labels = enc["input_ids"].clone()
-            plen   = tokenizer(rec["prompt"], return_tensors="pt")["input_ids"].shape[1]
-            labels[:, :plen] = -100    # mask prompt tokens
+            if plen is not None:
+                labels[:, :plen] = -100
+            else:
+                # Fallback: recompute prompt length (slower)
+                plen = tokenizer(rec["prompt"], return_tensors="pt")["input_ids"].shape[1]
+                labels[:, :plen] = -100
 
-            loss = model(**enc, labels=labels).loss * adv
+            loss = model(**enc, labels=labels).loss * adv_val
             loss.backward()
             total_loss += loss.item()
             n += 1
 
-    opt.step()
+    if n > 0:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        opt.step()
     opt.zero_grad()
     return total_loss / max(n, 1)

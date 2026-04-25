@@ -29,6 +29,8 @@ import os
 from pathlib import Path
 from typing import Dict, List
 
+import torch  # noqa: F401 — imported early so _torch alias works in nested fns
+
 logger = logging.getLogger(__name__)
 
 # ── Formatting template ───────────────────────────────────────────────────────
@@ -78,15 +80,20 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
     logger.info("Loading model: %s", model_name)
     tok   = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, device_map="auto"
+        model_name, device_map="auto", torch_dtype=torch.bfloat16
     )
+    # FIX: ensure pad token set for batched generation
     if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
+        tok.pad_token     = tok.eos_token
+        tok.pad_token_id  = tok.eos_token_id
 
     # Simple dataset wrapper
     from datasets import Dataset
     ds = Dataset.from_dict({"text": texts})
 
+    import torch as _torch
+    use_bf16 = _torch.cuda.is_available() and _torch.cuda.is_bf16_supported()
+    use_fp16 = _torch.cuda.is_available() and not use_bf16
     sft_cfg = SFTConfig(
         output_dir=output_dir,
         num_train_epochs=epochs,
@@ -96,7 +103,8 @@ def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
         max_seq_length=max_seq_len,
         save_strategy="epoch",
         logging_steps=10,
-        fp16=True,
+        bf16=use_bf16,   # FIX: prefer bf16 where supported
+        fp16=use_fp16,   # FIX: fp16 crashes on CPU
         report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
     )
     trainer = SFTTrainer(
@@ -126,17 +134,26 @@ def _train_plain(texts, model_name, output_dir, epochs, max_seq_len):
         tok.pad_token = tok.eos_token
 
     def _tokenize(batch):
-        return tok(batch["text"], truncation=True, max_length=max_seq_len, padding="max_length")
+        out = tok(batch["text"], truncation=True,
+                  max_length=max_seq_len, padding="max_length")
+        out["labels"] = [ids[:] for ids in out["input_ids"]]
+        return out
 
-    ds = Dataset.from_dict({"text": texts}).map(_tokenize, batched=True)
-    ds = ds.rename_column("input_ids", "input_ids")
+    # FIX: remove no-op rename_column that did nothing
+    ds = Dataset.from_dict({"text": texts}).map(
+        _tokenize, batched=True, remove_columns=["text"]
+    )
 
+    import torch as _torch
+    use_bf16 = _torch.cuda.is_available() and _torch.cuda.is_bf16_supported()
+    use_fp16 = _torch.cuda.is_available() and not use_bf16
     args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epochs,
         per_device_train_batch_size=2,
         save_strategy="epoch",
-        fp16=True,
+        bf16=use_bf16,   # FIX: prefer bf16
+        fp16=use_fp16,   # FIX: no fp16 on CPU
         report_to="none",
     )
     trainer = Trainer(

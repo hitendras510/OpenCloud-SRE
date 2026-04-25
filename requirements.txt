@@ -1,6 +1,7 @@
 # ─── Core ML ──────────────────────────────────────────────────────────────────
 torch>=2.2.0
 numpy>=1.26.0
+pyyaml>=6.0.1          # required by utils/config_loader.py
 
 # ─── LLM / Agents (vendor-agnostic, no OpenAI) ───────────────────────────────
 huggingface_hub>=0.23.0    # InferenceClient for Llama-3 dataset gen + evaluation
