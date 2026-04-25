@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Activate Python virtual environment
+source venv/bin/activate || true
+
 echo "🔴 Starting Chaos Control Backend (OpenEnv API) on port 8000..."
 uvicorn env.server:app --host 0.0.0.0 --port 8000 &
 SERVER_PID=$!
