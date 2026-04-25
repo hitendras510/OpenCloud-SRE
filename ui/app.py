@@ -76,6 +76,9 @@ def _init():
     st.session_state.tokens_saved = 0
     st.session_state.human_approved = False
     st.session_state.human_rejected = False
+    # ── Incident Timeline ──────────────────────────────────────────────────
+    st.session_state.timeline: List[Dict] = []   # list of timeline event dicts
+    st.session_state.incident_start_time: Optional[float] = None
 _init()
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
@@ -114,7 +117,20 @@ def _build(mock):
 env, graph = _build(mock_llm)
 
 # ── button handlers ───────────────────────────────────────────────────────────
-if start_btn and _OK: st.session_state.running = True
+if start_btn and _OK:
+    st.session_state.running = True
+    # Record incident start time and seed opening timeline event
+    import time as _time
+    st.session_state.incident_start_time = _time.perf_counter()
+    st.session_state.timeline = [{
+        "elapsed": 0.0,
+        "icon": "🚨",
+        "event": "Incident Detected",
+        "detail": f"Traffic={list(st.session_state.traffic)[-1]:.0f} | "
+                  f"DB={list(st.session_state.db)[-1]:.0f} | "
+                  f"Net={list(st.session_state.net)[-1]:.0f}",
+        "color": "#f87171",
+    }]
 if stop_btn:          st.session_state.running = False
 if reset_btn and _OK:
     st.session_state.running = False; st.session_state.step = 0
@@ -126,6 +142,7 @@ if reset_btn and _OK:
     st.session_state.steps   = deque(range(10),  maxlen=MAX_H)
     st.session_state.gstate  = None; st.session_state.tokens_saved = 0
     st.session_state.blast_warnings = []; st.session_state.human_approved = False
+    st.session_state.timeline = []; st.session_state.incident_start_time = None
     if env: env.reset()
     st.cache_resource.clear()
 
@@ -442,6 +459,89 @@ def _step():
     if st.session_state.human_approved:
         st.session_state.human_approved = False
 
+    # ── Incident Timeline: record this step's routing decision ────────────
+    import time as _time
+    _t0 = st.session_state.get("incident_start_time") or _time.perf_counter()
+    _elapsed = round(_time.perf_counter() - _t0, 2)
+    _gov = st.session_state.gov_signal
+    _rp  = st.session_state.routing
+
+    _TIMELINE_EVENTS = {
+        "AUTO_RESOLVE":       ("✅", "Resolution Executed",   "#4ade80"),
+        "HUMAN_ESCALATION":   ("⏳", "Awaiting Human Approval", "#facc15"),
+        "BLAST_RADIUS_BLOCK": ("🛑", "Blast Radius BLOCKED",   "#c084fc"),
+        "DEEP_NEGOTIATE":     ("💬", "Conflict → ChatOps Path", "#fb923c"),
+    }
+    _icon, _label, _color = _TIMELINE_EVENTS.get(
+        _gov, ("🔄", "Step Processed", "#94a3b8")
+    )
+    _dna_hit = result.get("dna_memory_hit") or {}
+    _conf    = _dna_hit.get("confidence", "")
+    if "fast" in _rp.lower():
+        _icon, _label, _color = "🧬", "DNA Cache HIT — Fast Path", "#38bdf8"
+        _detail = f"Action: {action.upper()} | Tokens: 0"
+    elif "middle" in _rp.lower():
+        _detail = f"Path: MIDDLE | Conf: {st.session_state.confidence:.0%} | Action: {action.upper()}"
+    else:
+        _detail = f"Path: {_rp} | Action: {action.upper()} | Blast: {bool(bw)}"
+
+    st.session_state.timeline.append({
+        "elapsed": _elapsed,
+        "icon": _icon,
+        "event": _label,
+        "detail": _detail,
+        "color": _color,
+    })
+    if st.session_state.resolved:
+        st.session_state.timeline.append({
+            "elapsed": round(_time.perf_counter() - _t0, 2),
+            "icon": "🏁",
+            "event": "Incident Closed — SLO ≥ 0.95",
+            "detail": f"SLO Score: {result.get('slo_score', 0):.3f}",
+            "color": "#4ade80",
+        })
+
+# ── Timeline renderer ─────────────────────────────────────────────────────────
+def _render_timeline():
+    """Render a vertical incident routing timeline using native Streamlit."""
+    events = st.session_state.get("timeline", [])
+    st.markdown('<p class="section-label">📋 Incident Routing Timeline</p>',
+                unsafe_allow_html=True)
+    if not events:
+        st.caption("Timeline will populate once the simulation starts.")
+        return
+
+    timeline_html = '<div style="padding:8px 0">'
+    for i, ev in enumerate(events):
+        connector = '' if i == len(events) - 1 else (
+            f'<div style="margin-left:19px;width:2px;height:18px;'
+            f'background:{ev["color"]};opacity:.4"></div>'
+        )
+        timeline_html += f"""
+        <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:4px">
+          <div style="
+            min-width:38px;height:38px;border-radius:50%;
+            background:{ev['color']}22;border:2px solid {ev['color']};
+            display:flex;align-items:center;justify-content:center;
+            font-size:1.1rem;flex-shrink:0">{ev['icon']}</div>
+          <div style="flex:1;padding-top:4px">
+            <div style="
+              font-family:'JetBrains Mono',monospace;
+              font-size:0.62rem;color:#475569;
+              letter-spacing:.08em">+{ev['elapsed']:.2f}s</div>
+            <div style="
+              font-size:0.8rem;font-weight:600;
+              color:{ev['color']};margin-top:1px">{ev['event']}</div>
+            <div style="
+              font-size:0.7rem;color:#64748b;
+              margin-top:1px">{ev['detail']}</div>
+          </div>
+        </div>
+        {connector}"""
+    timeline_html += '</div>'
+    st.markdown(timeline_html, unsafe_allow_html=True)
+
+
 # ── Main tick ─────────────────────────────────────────────────────────────────
 if st.session_state.running and not st.session_state.resolved:
     _step()
@@ -453,7 +553,6 @@ if st.session_state.running and not st.session_state.resolved:
         st.session_state.running = False
         st.balloons()
     elif st.session_state.gov_signal == "HUMAN_ESCALATION":
-        # Pause loop — waiting for human
         st.warning("⏳ Simulation paused — awaiting human approval in the escrow panel above.")
     else:
         time.sleep(step_delay)
@@ -466,3 +565,7 @@ elif not st.session_state.running:
         st.info(f"⚠️ Display-only mode — import error: `{_ERR}`")
     else:
         st.info("▶ Press **Start** in the sidebar to begin the incident simulation.")
+
+# ── Incident Timeline (always rendered below main layout) ─────────────────────
+st.divider()
+_render_timeline()
