@@ -1,0 +1,46 @@
+# ─── SFT Training ─────────────────────────────────────────────────────────────
+sft:
+  model_name:       "Qwen/Qwen2.5-1.5B-Instruct"
+  dataset_path:     "data/sft_logs.jsonl"
+  output_dir:       "models/sft_model"
+  epochs:           2
+  batch_size:       2
+  grad_accumulation: 4
+  learning_rate:    2.0e-5
+  max_seq_length:   1024
+  fp16:             true
+
+# ─── GRPO / RL Training ───────────────────────────────────────────────────────
+grpo:
+  model_name:       "Qwen/Qwen2.5-1.5B-Instruct"
+  env_url:          "http://localhost:8000"
+  output_dir:       "models/rl_model"
+  epochs:           3
+  steps_per_epoch:  50
+  group_size:       8
+  max_new_tokens:   256
+  learning_rate:    5.0e-6
+  max_seq_length:   2048
+  lora_rank:        16
+  load_in_4bit:     true
+  temperature:      0.9
+  seed:             42
+
+# ─── Dataset Generation ───────────────────────────────────────────────────────
+dataset:
+  model:            "meta-llama/Meta-Llama-3-70B-Instruct"
+  count:            100
+  output_path:      "data/sft_logs.jsonl"
+  use_llm:          true
+
+# ─── W&B ──────────────────────────────────────────────────────────────────────
+wandb:
+  project:          "opencloud-sre-grpo"
+  tags:             ["grpo", "sre", "hackathon"]
+
+# ─── Environment Server ────────────────────────────────────────────────────────
+env:
+  host:             "0.0.0.0"
+  port:             8000
+  max_steps:        50
+  crash_on_reset:   true
