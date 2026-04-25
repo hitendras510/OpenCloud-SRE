@@ -131,4 +131,3 @@ chmod +x start.sh
 
 ---
 **OpenCloud-SRE: Turning Cloud Intelligence into an Enterprise Reflex.**
-```
