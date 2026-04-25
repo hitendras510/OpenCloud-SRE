@@ -57,6 +57,7 @@ from graph.message_bus import (
     ConsensusStatus,
     NetworkIntent,
     DBIntent,
+    ComputeIntent,
     initial_state,
     append_chat,
 )
@@ -68,6 +69,10 @@ from controllers.system_prompts import (
     DATABASE_CONTROLLER_SYSTEM_PROMPT,
     LEAD_SRE_SYSTEM_PROMPT,
     CHATOPS_SYSTEM_PROMPT,
+    COMPUTE_AGENT_SYSTEM_PROMPT,
+    NETWORK_AGENT_SYSTEM_PROMPT,
+    DATABASE_AGENT_SYSTEM_PROMPT,
+    SHADOW_ARBITER_SYSTEM_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -144,6 +149,68 @@ def _mock_db_intent(state_vec: list[float]) -> DBIntent:
     if db_temp > 55:
         return DBIntent(thought_process="Mock logic: Moderate DB load", observed_anomalies=["Moderate DB Load"], verified_root_cause="Minor Contention", action="cache_flush", risk_score=0.55)
     return DBIntent(thought_process="Mock logic: DB nominal", observed_anomalies=[], verified_root_cause="Normal Operations", action="noop", risk_score=0.25)
+
+
+# ── Shadow Consensus mock helpers (rule-based, no LLM needed) ────────────────
+
+def _mock_compute_agent_intent(state_vec: list[float]) -> ComputeIntent:
+    """Deterministic Compute Agent: fires on CPU/Traffic spikes."""
+    cpu = state_vec[0]  # Traffic_Load == CPU in state tensor
+    if cpu > 85:
+        return ComputeIntent(agent_role="Compute",
+            diagnosis=f"CPU={cpu:.1f} critical — load-shedding required.",
+            confidence_score=0.95, proposed_action="throttle_traffic")
+    if cpu > 70:
+        return ComputeIntent(agent_role="Compute",
+            diagnosis=f"CPU={cpu:.1f} elevated — scale out recommended.",
+            confidence_score=0.75, proposed_action="scale_out")
+    return ComputeIntent(agent_role="Compute",
+        diagnosis=f"CPU={cpu:.1f} nominal — deferring to other agents.",
+        confidence_score=0.10, proposed_action="noop")
+
+
+def _mock_network_agent_intent(state_vec: list[float]) -> ComputeIntent:
+    """Deterministic Network Agent: fires on Latency/Network_Health failures."""
+    net_health = state_vec[2]
+    if net_health > 50:   # server Latency axis: high value = bad
+        return ComputeIntent(agent_role="Network",
+            diagnosis=f"Latency/Network={net_health:.1f} — severe partition detected.",
+            confidence_score=0.99, proposed_action="schema_failover")
+    if net_health > 30:
+        return ComputeIntent(agent_role="Network",
+            diagnosis=f"Network_Health={net_health:.1f} degraded — circuit break.",
+            confidence_score=0.65, proposed_action="circuit_breaker")
+    return ComputeIntent(agent_role="Network",
+        diagnosis=f"Network_Health={net_health:.1f} nominal — deferring.",
+        confidence_score=0.10, proposed_action="noop")
+
+
+def _mock_database_agent_intent(state_vec: list[float]) -> ComputeIntent:
+    """Deterministic Database Agent: fires on DB_Temp spikes."""
+    db_temp = state_vec[1]
+    if db_temp > 85:
+        return ComputeIntent(agent_role="Database",
+            diagnosis=f"DB_Temp={db_temp:.1f} — deadlock state assumed.",
+            confidence_score=0.92, proposed_action="kill_long_queries")
+    if db_temp > 65:
+        return ComputeIntent(agent_role="Database",
+            diagnosis=f"DB_Temp={db_temp:.1f} elevated — pod restart.",
+            confidence_score=0.60, proposed_action="restart_pods")
+    return ComputeIntent(agent_role="Database",
+        diagnosis=f"DB_Temp={db_temp:.1f} nominal — deferring.",
+        confidence_score=0.20, proposed_action="noop")
+
+
+# Action mapping for Shadow Agent proposed_actions → env VALID_ACTIONS
+_SHADOW_ACTION_MAP: Dict[str, str] = {
+    "throttle_traffic": "throttle_traffic",
+    "scale_out":        "scale_out",
+    "schema_failover":  "schema_failover",
+    "circuit_breaker":  "circuit_breaker",
+    "kill_long_queries": "cache_flush",   # surgical DB proxy
+    "restart_pods":     "restart_pods",
+    "noop":             "noop",
+}
 
 
 _NETWORK_TO_ACTION: Dict[str, str] = {
@@ -397,6 +464,147 @@ def shadow_consensus_node(
     }
 
 
+# ── Shadow Consensus agent nodes ─────────────────────────────────────────────
+
+def compute_agent_node(
+    state: SREGraphState,
+    client: Optional[Any],
+    mock_llm: bool,
+) -> SREGraphState:
+    """Shadow Worker 1 — Compute domain specialist."""
+    vec = state.get("current_state_tensor", [50.0, 50.0, 5.0])
+
+    if mock_llm or client is None:
+        intent = _mock_compute_agent_intent(vec)
+    else:
+        import json as _json
+        cpu = vec[0]
+        metrics = {"CPU": cpu, "Traffic_Load": vec[0], "DB_Temp": vec[1], "Latency": vec[2]}
+        try:
+            raw = _call_llm(client, COMPUTE_AGENT_SYSTEM_PROMPT, _json.dumps(metrics))
+            p = _json.loads(raw)
+            intent = ComputeIntent(agent_role=str(p.get("agent_role", "Compute")),
+                diagnosis=str(p.get("diagnosis", "")),
+                confidence_score=float(p.get("confidence_score", 0.1)),
+                proposed_action=str(p.get("proposed_action", "noop")))
+        except Exception as exc:
+            logger.warning("compute_agent_node LLM failed: %s", exc)
+            intent = _mock_compute_agent_intent(vec)
+
+    state = append_chat(state, role="compute_agent",
+        content=f"[Compute Agent] conf={intent['confidence_score']:.2f} | "
+                f"action={intent['proposed_action']} | {intent['diagnosis']}")
+    return {**state, "compute_intent": intent}  # type: ignore[return-value]
+
+
+def network_agent_node(
+    state: SREGraphState,
+    client: Optional[Any],
+    mock_llm: bool,
+) -> SREGraphState:
+    """Shadow Worker 2 — Network domain specialist."""
+    vec = state.get("current_state_tensor", [50.0, 50.0, 5.0])
+
+    if mock_llm or client is None:
+        intent = _mock_network_agent_intent(vec)
+    else:
+        import json as _json
+        metrics = {"CPU": vec[0], "Traffic_Load": vec[0], "DB_Temp": vec[1], "Latency": vec[2]}
+        try:
+            raw = _call_llm(client, NETWORK_AGENT_SYSTEM_PROMPT, _json.dumps(metrics))
+            p = _json.loads(raw)
+            intent = ComputeIntent(agent_role=str(p.get("agent_role", "Network")),
+                diagnosis=str(p.get("diagnosis", "")),
+                confidence_score=float(p.get("confidence_score", 0.1)),
+                proposed_action=str(p.get("proposed_action", "noop")))
+        except Exception as exc:
+            logger.warning("network_agent_node LLM failed: %s", exc)
+            intent = _mock_network_agent_intent(vec)
+
+    state = append_chat(state, role="network_agent",
+        content=f"[Network Agent] conf={intent['confidence_score']:.2f} | "
+                f"action={intent['proposed_action']} | {intent['diagnosis']}")
+    return {**state, "network_agent_intent": intent}  # type: ignore[return-value]
+
+
+def database_agent_node(
+    state: SREGraphState,
+    client: Optional[Any],
+    mock_llm: bool,
+) -> SREGraphState:
+    """Shadow Worker 3 — Database domain specialist."""
+    vec = state.get("current_state_tensor", [50.0, 50.0, 5.0])
+
+    if mock_llm or client is None:
+        intent = _mock_database_agent_intent(vec)
+    else:
+        import json as _json
+        metrics = {"CPU": vec[0], "Traffic_Load": vec[0], "DB_Temp": vec[1], "Latency": vec[2]}
+        try:
+            raw = _call_llm(client, DATABASE_AGENT_SYSTEM_PROMPT, _json.dumps(metrics))
+            p = _json.loads(raw)
+            intent = ComputeIntent(agent_role=str(p.get("agent_role", "Database")),
+                diagnosis=str(p.get("diagnosis", "")),
+                confidence_score=float(p.get("confidence_score", 0.1)),
+                proposed_action=str(p.get("proposed_action", "noop")))
+        except Exception as exc:
+            logger.warning("database_agent_node LLM failed: %s", exc)
+            intent = _mock_database_agent_intent(vec)
+
+    state = append_chat(state, role="database_agent",
+        content=f"[Database Agent] conf={intent['confidence_score']:.2f} | "
+                f"action={intent['proposed_action']} | {intent['diagnosis']}")
+    return {**state, "database_agent_intent": intent}  # type: ignore[return-value]
+
+
+def shadow_debate_node(
+    state: SREGraphState,
+    client: Optional[Any],
+    mock_llm: bool,
+) -> SREGraphState:
+    """
+    Shadow Arbiter — picks the winner of the 3-agent debate by confidence_score.
+
+    Runs deterministically (no LLM needed) in mock mode.  In live mode, the
+    HF Arbiter LLM validates and narrates the decision.
+    """
+    compute  = state.get("compute_intent")  or ComputeIntent(agent_role="Compute",  diagnosis="", confidence_score=0.0, proposed_action="noop")
+    network  = state.get("network_agent_intent") or ComputeIntent(agent_role="Network",  diagnosis="", confidence_score=0.0, proposed_action="noop")
+    database = state.get("database_agent_intent") or ComputeIntent(agent_role="Database", diagnosis="", confidence_score=0.0, proposed_action="noop")
+
+    agents = [
+        (network["confidence_score"],  "Network",  network),
+        (database["confidence_score"], "Database", database),
+        (compute["confidence_score"],  "Compute",  compute),
+    ]
+    agents.sort(key=lambda x: x[0], reverse=True)
+
+    winning_score, winning_role, winner = agents[0]
+    raw_action = winner["proposed_action"]
+    resolved   = _SHADOW_ACTION_MAP.get(raw_action, "noop")
+    if resolved not in VALID_ACTIONS:
+        resolved = "noop"
+
+    rationale = (
+        f"{winning_role} Agent won with confidence={winning_score:.2f} — "
+        f"proposed '{raw_action}' → executing '{resolved}'."
+    )
+
+    state = append_chat(state, role="shadow_arbiter",
+        content=f"[Shadow Arbiter] WINNER={winning_role} | conf={winning_score:.2f} | "
+                f"resolved_action={resolved} | {rationale}")
+
+    return {  # type: ignore[return-value]
+        **state,
+        "recommended_action": resolved,
+        "consensus_status":   ConsensusStatus.GREEN,
+        "routing_path":       RoutingPath.MIDDLE,
+        "winning_agent":      winning_role,
+        "winning_confidence": winning_score,
+        "shadow_rationale":   rationale,
+    }
+
+
 def chatops_node(
     state: SREGraphState,
     client: Optional[Any],
@@ -592,15 +800,33 @@ def build_sre_graph(
     def _exec(s: SREGraphState) -> SREGraphState:
         return executor_node(s, env)
 
+    # ── Shadow Consensus GRPO workers ─────────────────────────────────────
+    def _compute_agent(s: SREGraphState) -> SREGraphState:
+        return compute_agent_node(s, client, mock_llm)
+
+    def _network_agent(s: SREGraphState) -> SREGraphState:
+        return network_agent_node(s, client, mock_llm)
+
+    def _database_agent(s: SREGraphState) -> SREGraphState:
+        return database_agent_node(s, client, mock_llm)
+
+    def _shadow_debate(s: SREGraphState) -> SREGraphState:
+        return shadow_debate_node(s, client, mock_llm)
+
     # ── assemble the graph ─────────────────────────────────────────────────
     builder = StateGraph(SREGraphState)
 
-    builder.add_node("dna_memory_node", _dna)
-    builder.add_node("network_controller_node", _net)
-    builder.add_node("db_controller_node", _db)
-    builder.add_node("shadow_consensus_node", _consensus)
-    builder.add_node("chatops_node", _chatops)
-    builder.add_node("executor_node", _exec)
+    builder.add_node("dna_memory_node",         _dna)
+    builder.add_node("network_controller_node",  _net)
+    builder.add_node("db_controller_node",       _db)
+    builder.add_node("shadow_consensus_node",    _consensus)
+    builder.add_node("chatops_node",             _chatops)
+    builder.add_node("executor_node",            _exec)
+    # Shadow Consensus GRPO workers + arbiter
+    builder.add_node("compute_agent_node",       _compute_agent)
+    builder.add_node("network_agent_node",       _network_agent)
+    builder.add_node("database_agent_node",      _database_agent)
+    builder.add_node("shadow_debate_node",       _shadow_debate)
 
     builder.set_entry_point("dna_memory_node")
 
@@ -608,26 +834,34 @@ def build_sre_graph(
         "dna_memory_node",
         _route_after_dna,
         {
-            "executor_node": "executor_node",
+            "executor_node":          "executor_node",
             "network_controller_node": "network_controller_node",
         },
     )
 
+    # Legacy MIDDLE path: network → db → shadow_consensus
     builder.add_edge("network_controller_node", "db_controller_node")
-    builder.add_edge("db_controller_node", "shadow_consensus_node")
+    # After legacy db_ctrl, run the three Shadow workers in series, then arbiter
+    builder.add_edge("db_controller_node",      "compute_agent_node")
+    builder.add_edge("compute_agent_node",       "network_agent_node")
+    builder.add_edge("network_agent_node",       "database_agent_node")
+    builder.add_edge("database_agent_node",      "shadow_debate_node")
+    # Arbiter result goes straight to executor (GREEN by definition)
+    builder.add_edge("shadow_debate_node",       "executor_node")
 
+    # Keep the legacy consensus node reachable for the RETRY loop
     builder.add_conditional_edges(
         "shadow_consensus_node",
         _route_after_consensus,
         {
-            "executor_node": "executor_node",
-            "chatops_node": "chatops_node",
+            "executor_node":          "executor_node",
+            "chatops_node":           "chatops_node",
             "network_controller_node": "network_controller_node",
         },
     )
 
-    builder.add_edge("chatops_node", "executor_node")
-    builder.add_edge("executor_node", END)
+    builder.add_edge("chatops_node",   "executor_node")
+    builder.add_edge("executor_node",  END)
 
     return builder.compile()
 

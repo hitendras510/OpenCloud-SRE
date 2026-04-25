@@ -111,6 +111,21 @@ class DBIntent(TypedDict):
     risk_score: float
 
 
+class ComputeIntent(TypedDict):
+    """
+    Micro-intent JSON emitted by the Compute Agent (Shadow Consensus GRPO worker).
+
+    This is the new-style intent that carries ``confidence_score`` (0-1) and
+    ``proposed_action`` instead of the legacy ``risk_score`` / ``action`` pair.
+    All three Shadow Consensus workers (Compute, Network, Database) emit this
+    same shape; the Shadow Arbiter picks the winner by ``confidence_score``.
+    """
+    agent_role: str        # "Compute" | "Network" | "Database"
+    diagnosis: str         # Domain-specific explanation of the fault
+    confidence_score: float  # 0.0 – 1.0; highest wins the debate
+    proposed_action: str   # Domain-scoped action string
+
+
 # ───────────────────────────── primary state dict ─────────────────────────────
 
 
@@ -174,6 +189,9 @@ class SREGraphState(TypedDict, total=False):
     chat_history: List[ChatMessage]
     network_intent: Optional[NetworkIntent]
     db_intent: Optional[DBIntent]
+    compute_intent: Optional[ComputeIntent]      # Compute Shadow Agent output
+    network_agent_intent: Optional[ComputeIntent]  # Network Shadow Agent output
+    database_agent_intent: Optional[ComputeIntent]  # Database Shadow Agent output
     routing_path: RoutingPath
     consensus_status: ConsensusStatus
     recommended_action: Optional[str]
@@ -204,6 +222,17 @@ class SREGraphState(TypedDict, total=False):
     Set to True by the UI 'Approve' button when trust_decision == ESCROWED.
     The executor node checks this before proceeding.
     """
+
+    # ── Shadow Consensus Arbiter outputs ─────────────────────────────────────
+
+    winning_agent: Optional[str]
+    """Which Shadow Agent won the debate: 'Compute', 'Network', or 'Database'."""
+
+    winning_confidence: Optional[float]
+    """The confidence_score of the winning agent (0.0 – 1.0)."""
+
+    shadow_rationale: Optional[str]
+    """One-sentence explanation from the Shadow Arbiter for why the agent won."""
 
 
 # ───────────────────────────── factory helpers ────────────────────────────────
@@ -240,6 +269,9 @@ def initial_state(
         chat_history=[],
         network_intent=None,
         db_intent=None,
+        compute_intent=None,
+        network_agent_intent=None,
+        database_agent_intent=None,
         routing_path=RoutingPath.MIDDLE,
         consensus_status=ConsensusStatus.RED,
         recommended_action=None,
@@ -254,6 +286,10 @@ def initial_state(
         blast_radius_warnings=[],
         trust_decision=TrustDecision.ESCROWED,
         human_approved=False,
+        # Shadow Arbiter defaults
+        winning_agent=None,
+        winning_confidence=None,
+        shadow_rationale=None,
     )
 
 

@@ -157,24 +157,32 @@ with st.sidebar:
     st.divider()
     
     st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.62rem;color:#f43f5e;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">🔴 Chaos Control Center</div>', unsafe_allow_html=True)
-    if st.button("Inject CPU Spike", use_container_width=True):
-        try:
-            requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "CPU_SPIKE", "value": 95.0}, timeout=2)
-            st.toast("🔴 CPU Spike Injected!")
-        except Exception as e:
-            st.toast(f"Error injecting fault: {e}")
-    if st.button("Simulate Network Partition", use_container_width=True):
-        try:
-            requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "NETWORK_PARTITION", "value": 95.0}, timeout=2)
-            st.toast("🔴 Network Partition Simulated!")
-        except Exception as e:
-            st.toast(f"Error injecting fault: {e}")
-    if st.button("Trigger DB Deadlock", use_container_width=True):
-        try:
-            requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "DB_DEADLOCK", "value": 95.0}, timeout=2)
-            st.toast("🔴 DB Deadlock Triggered!")
-        except Exception as e:
-            st.toast(f"Error injecting fault: {e}")
+    with st.popover("Inject CPU Spike", use_container_width=True):
+        cpu_val = st.slider("Target CPU (%)", 50.0, 100.0, 95.0, step=1.0, key="cpu_slider")
+        if st.button("Execute CPU Spike", type="primary", use_container_width=True, key="exec_cpu"):
+            try:
+                requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "CPU_SPIKE", "value": cpu_val}, timeout=2)
+                st.toast(f"🔴 CPU Spike Injected ({cpu_val}%)!")
+            except Exception as e:
+                st.toast(f"Error injecting fault: {e}")
+
+    with st.popover("Simulate Network Partition", use_container_width=True):
+        net_val = st.slider("Target Latency/Loss (%)", 50.0, 100.0, 95.0, step=1.0, key="net_slider")
+        if st.button("Execute Partition", type="primary", use_container_width=True, key="exec_net"):
+            try:
+                requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "NETWORK_PARTITION", "value": net_val}, timeout=2)
+                st.toast(f"🔴 Network Partition Simulated ({net_val}%)!")
+            except Exception as e:
+                st.toast(f"Error injecting fault: {e}")
+
+    with st.popover("Trigger DB Deadlock", use_container_width=True):
+        db_val = st.slider("Target DB Temperature (%)", 50.0, 100.0, 95.0, step=1.0, key="db_slider")
+        if st.button("Execute DB Deadlock", type="primary", use_container_width=True, key="exec_db"):
+            try:
+                requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "DB_DEADLOCK", "value": db_val}, timeout=2)
+                st.toast(f"🔴 DB Deadlock Triggered ({db_val}%)!")
+            except Exception as e:
+                st.toast(f"Error injecting fault: {e}")
             
     st.divider()
     st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.58rem;color:#484f58;text-align:center;letter-spacing:.06em">OpenCloud-SRE · Cognitive Compression<br>Meta PyTorch · Hackathon 2025</div>', unsafe_allow_html=True)
