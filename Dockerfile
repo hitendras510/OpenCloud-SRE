@@ -61,10 +61,18 @@ ENV RL_STEPS="50"
 # ── Port (HF Spaces requires 7860) ───────────────────────────────────────────
 EXPOSE 7860
 
-# ── Entrypoint: run the full pipeline then launch the UI ─────────────────────
-# The CMD uses semicolons so backgrounding uvicorn works correctly.
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+# CRITICAL FIX: HF Spaces requires port 7860 to respond within ~30 seconds.
+# Strategy: Launch Streamlit UI FIRST (background), then run training pipeline.
+# The UI shows a "Training in Progress" status until models are ready.
 CMD ["/bin/bash", "-c", "\
     set -e; \
+    echo '🚀 Launching UI on port 7860 first (required by HF Spaces)...'; \
+    streamlit run ui/app.py \
+        --server.port 7860 \
+        --server.address 0.0.0.0 \
+        --server.headless true & \
+    UI_PID=$!; \
     echo '🚀 Stage 1: Generating SFT dataset...'; \
     python -m training.sft.dataset_generator --count ${SFT_DATA_COUNT:-100}; \
     echo '🏋️ Stage 2: SFT warm-up...'; \
@@ -84,9 +92,6 @@ CMD ["/bin/bash", "-c", "\
         --steps ${RL_STEPS:-50} \
         --output models/rl_model \
         --wandb-project ${WANDB_PROJECT:-opencloud-sre-grpo}; \
-    echo '✅ Training complete! Launching UI dashboard...'; \
-    streamlit run ui/app.py \
-        --server.port 7860 \
-        --server.address 0.0.0.0 \
-        --server.headless true \
+    echo '✅ Training complete! UI already running on :7860'; \
+    wait $UI_PID \
 "]
