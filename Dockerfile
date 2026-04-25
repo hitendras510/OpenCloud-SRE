@@ -54,29 +54,29 @@ ENV RL_STEPS="50"
 EXPOSE 7860
 
 # ── Entrypoint: run the full pipeline then launch the UI ─────────────────────
-# The CMD is a shell script so each stage can fail gracefully.
+# The CMD uses semicolons so backgrounding uvicorn works correctly.
 CMD ["/bin/bash", "-c", "\
-    set -e && \
-    echo '🚀 Stage 1: Generating SFT dataset...' && \
-    python -m training.sft.dataset_generator --count ${SFT_DATA_COUNT:-100} && \
-    echo '🏋️ Stage 2: SFT warm-up...' && \
+    set -e; \
+    echo '🚀 Stage 1: Generating SFT dataset...'; \
+    python -m training.sft.dataset_generator --count ${SFT_DATA_COUNT:-100}; \
+    echo '🏋️ Stage 2: SFT warm-up...'; \
     python -m training.sft.train_sft \
         --dataset data/sft_logs.jsonl \
         --model Qwen/Qwen2.5-1.5B-Instruct \
         --output models/sft_model \
-        --epochs 2 && \
-    echo '🤖 Stage 3: Starting OpenEnv server...' && \
+        --epochs 2; \
+    echo '🤖 Stage 3: Starting OpenEnv server...'; \
     uvicorn env.server:app --host 0.0.0.0 --port 8001 & \
-    sleep 5 && \
-    echo '🎯 Stage 3: GRPO RL training...' && \
+    sleep 10; \
+    echo '🎯 Stage 3: GRPO RL training...'; \
     python -m training.rl.grpo_trainer \
         --model models/sft_model \
         --env-url http://localhost:8001 \
         --epochs ${RL_EPOCHS:-3} \
         --steps ${RL_STEPS:-50} \
         --output models/rl_model \
-        --wandb-project ${WANDB_PROJECT:-opencloud-sre-grpo} && \
-    echo '✅ Training complete! Launching UI dashboard...' && \
+        --wandb-project ${WANDB_PROJECT:-opencloud-sre-grpo}; \
+    echo '✅ Training complete! Launching UI dashboard...'; \
     streamlit run ui/app.py \
         --server.port 7860 \
         --server.address 0.0.0.0 \
