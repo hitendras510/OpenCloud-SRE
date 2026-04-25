@@ -20,7 +20,7 @@ st.set_page_config(
 # Load external CSS
 _CSS_PATH = Path(__file__).parent / "styles.css"
 if _CSS_PATH.exists():
-    st.markdown(f"<style>{_CSS_PATH.read_text()}</style>", unsafe_allow_html=True)
+    st.markdown(f"<style>{_CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 # ── imports ──────────────────────────────────────────────────────────────────
 try:

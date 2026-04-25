@@ -17,6 +17,8 @@ Reward Components (Penalties / Anti-Hacking)
   noop_abuse_penalty         : -30   — noop used when system is in critical state
   confidence_calibration_pen : -15   — high confidence on bad outcomes
   state_plausibility_penalty : -40   — output claims impossible state transitions
+  oscillation_penalty        : -25   — flipping between opposite actions
+  json_integrity_penalty     : -15   — malformed or invalid action keys
 
 All components are logged independently to W&B so judges can audit
 that the model isn't gaming a single soft score (reward hacking prevention).
@@ -134,6 +136,43 @@ def _state_recovery_reward(obs_before: Dict[str, Any],
         return 50.0 + raw * 0.5
     else:
         return max(-50.0, raw * 0.5)
+
+
+def _resource_efficiency_reward(obs_after: Dict[str, Any]) -> float:
+    """+10 if system is stable (SLO > 0.8) AND resources are low (Temp < 60, Traffic < 60)."""
+    state = obs_after.get("observation", obs_after)
+    slo = state.get("slo_score", 1.0)
+    tl = state.get("Traffic_Load", 0.0)
+    dt = state.get("Database_Temperature", 0.0)
+    if slo > 0.8 and tl < 60.0 and dt < 60.0:
+        return 10.0
+    return 0.0
+
+
+def _action_impact_reward(action: str, obs_before: Dict[str, Any], obs_after: Dict[str, Any]) -> float:
+    """+15 if the action significantly improved the most critical metric."""
+    before = obs_before.get("observation", obs_before)
+    after = obs_after.get("observation", obs_after)
+    
+    metrics = {
+        "Traffic_Load": before.get("Traffic_Load", 50.0),
+        "Database_Temperature": before.get("Database_Temperature", 50.0),
+        "Network_Health": 100.0 - before.get("Network_Health", 50.0) # Invert health to find 'criticality'
+    }
+    
+    critical_metric = max(metrics, key=metrics.get)
+    
+    v_before = before.get(critical_metric, 50.0)
+    v_after = after.get(critical_metric, 50.0)
+    
+    if critical_metric == "Network_Health":
+        if v_after > v_before + 5.0: # Health improved
+            return 15.0
+    else:
+        if v_after < v_before - 5.0: # Load/Temp decreased
+            return 15.0
+            
+    return 0.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -310,7 +349,7 @@ def _state_plausibility_penalty(
 # absurdly high, which is a hallmark of reward hacking
 # ══════════════════════════════════════════════════════════════════════════════
 _REWARD_FLOOR = -150.0
-_REWARD_CEIL  =  130.0  # max possible legitimate: format(10) + recovery(100) + reasoning(20)
+_REWARD_CEIL  =  155.0  # max possible: fmt(10)+rec(100)+reas(20)+eff(10)+impact(15)
 
 
 def _clamp_reward(total: float) -> float:
@@ -321,6 +360,36 @@ def _clamp_reward(total: float) -> float:
             "ANTI-HACK: Reward explosion clamped %.1f → %.1f", total, clamped
         )
     return clamped
+
+
+def _oscillation_penalty(action: str, action_history: List[str]) -> float:
+    """-25 if agent flips between opposite actions (e.g. scale_out vs throttle_traffic)."""
+    if len(action_history) < 1:
+        return 0.0
+    last_a = action_history[-1]
+    opposites = [
+        ("scale_out", "throttle_traffic"),
+        ("restart_pods", "noop"),
+        ("circuit_breaker", "load_balance")
+    ]
+    for a1, a2 in opposites:
+        if (action == a1 and last_a == a2) or (action == a2 and last_a == a1):
+            logger.info("ANTI-HACK: Oscillation detected — '%s' vs '%s'", last_a, action)
+            return -25.0
+    return 0.0
+
+
+def _json_integrity_penalty(completion: str) -> float:
+    """-15 if JSON is valid but intent is missing or invalid."""
+    try:
+        s, e = completion.find("{"), completion.rfind("}") + 1
+        if s == -1: return -15.0
+        p = json.loads(completion[s:e])
+        if "intent" not in p or p["intent"] not in _VALID_ACTIONS:
+            return -15.0
+    except:
+        return -15.0
+    return 0.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -383,36 +452,57 @@ class MultiComponentEvaluator:
         recovery  = _state_recovery_reward(obs_before, obs_after)
         reasoning = _llm_reasoning_score(
             chat_history, routing_path, self._hf_client)
+        eff       = _resource_efficiency_reward(obs_after)
+        impact    = _action_impact_reward(action, obs_before, obs_after)
 
         # ── Anti-hacking penalties ────────────────────────────────────────
-        blast       = -50.0 if _check_blast_radius(action, obs_before) else 0.0
+        blast_v = _check_blast_radius(action, obs_before)
+        blast       = -50.0 if blast_v else 0.0
         repetition  = _repetition_penalty(action, list(self._action_history))
         noop_abuse  = _noop_abuse_penalty(action, obs_before)
         conf_cal    = _confidence_calibration_penalty(confidence, obs_before, obs_after)
         plausible   = _state_plausibility_penalty(obs_before, obs_after)
+        oscillation = _oscillation_penalty(action, list(self._action_history))
+        integrity   = _json_integrity_penalty(completion)
 
         # ── Track action for future repetition checks ─────────────────────
         self._action_history.append(action)
 
         # ── Sum and clamp ─────────────────────────────────────────────────
-        raw_total = (fmt + recovery + reasoning
-                     + blast + repetition + noop_abuse + conf_cal + plausible)
+        raw_total = (fmt + recovery + reasoning + eff + impact
+                     + blast + repetition + noop_abuse + conf_cal + plausible
+                     + oscillation + integrity)
         total = _clamp_reward(raw_total)
+
+        # ── Failure Visibility (Violations) ───────────────────────────────
+        violations = []
+        if blast < 0: violations.append(f"Blast Radius: {blast_v[0]}")
+        if repetition < 0: violations.append("Action Repetition (3+ times)")
+        if noop_abuse < 0: violations.append("Noop Abuse in Critical State")
+        if conf_cal < 0:   violations.append("Overconfident Failure")
+        if plausible < 0:  violations.append("Implausible State Transition")
+        if oscillation < 0: violations.append("Action Oscillation Detected")
+        if integrity < 0:   violations.append("JSON/Intent Integrity Failure")
 
         reward_dict = {
             # Positive signals
             "format_reward":                 fmt,
             "state_recovery_reward":         recovery,
             "llm_reasoning_score":           reasoning,
+            "resource_efficiency_reward":    eff,
+            "action_impact_reward":          impact,
             # Anti-hacking penalties
             "blast_radius_penalty":          blast,
             "repetition_penalty":            repetition,
             "noop_abuse_penalty":            noop_abuse,
             "confidence_calibration_penalty": conf_cal,
             "state_plausibility_penalty":    plausible,
+            "oscillation_penalty":           oscillation,
+            "json_integrity_penalty":        integrity,
             # Totals
             "total_raw":                     raw_total,
             "total":                         total,
+            "violations":                    violations,
         }
 
         # Log every column to W&B
