@@ -74,45 +74,88 @@ def _format_sample(row: Dict) -> str:
 # ── Trainers ──────────────────────────────────────────────────────────────────
 
 def _train_with_trl(texts, model_name, output_dir, epochs, max_seq_len):
-    from trl import SFTTrainer, SFTConfig
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    """TRL-version-safe SFT trainer (handles TRL 0.9 through 0.15+)."""
+    import inspect
+    from trl import SFTTrainer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 
     logger.info("Loading model: %s", model_name)
     tok   = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
         model_name, device_map="auto", torch_dtype=torch.bfloat16
     )
-    # FIX: ensure pad token set for batched generation
     if tok.pad_token is None:
-        tok.pad_token     = tok.eos_token
-        tok.pad_token_id  = tok.eos_token_id
+        tok.pad_token    = tok.eos_token
+        tok.pad_token_id = tok.eos_token_id
 
-    # Simple dataset wrapper
     from datasets import Dataset
     ds = Dataset.from_dict({"text": texts})
 
     import torch as _torch
     use_bf16 = _torch.cuda.is_available() and _torch.cuda.is_bf16_supported()
     use_fp16 = _torch.cuda.is_available() and not use_bf16
-    sft_cfg = SFTConfig(
-        output_dir=output_dir,
-        num_train_epochs=epochs,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,
-        learning_rate=2e-5,
-        max_seq_length=max_seq_len,
-        save_strategy="epoch",
-        logging_steps=10,
-        bf16=use_bf16,   # FIX: prefer bf16 where supported
-        fp16=use_fp16,   # FIX: fp16 crashes on CPU
-        report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
-    )
-    trainer = SFTTrainer(
+
+    try:
+        from trl import SFTConfig
+        args = SFTConfig(
+            output_dir=output_dir,
+            num_train_epochs=epochs,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            learning_rate=2e-5,
+            save_strategy="epoch",
+            logging_steps=10,
+            bf16=use_bf16,
+            fp16=use_fp16,
+            report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
+            push_to_hub=False,
+            max_seq_length=max_seq_len,
+            dataset_text_field="text",
+        )
+    except ImportError:
+        args = TrainingArguments(
+            output_dir=output_dir,
+            num_train_epochs=epochs,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            learning_rate=2e-5,
+            save_strategy="epoch",
+            logging_steps=10,
+            bf16=use_bf16,
+            fp16=use_fp16,
+            report_to="wandb" if os.getenv("WANDB_API_KEY") else "none",
+            push_to_hub=False,
+        )
+
+    # Build kwargs based on what this TRL version's SFTTrainer actually accepts
+    trainer_sig = set(inspect.signature(SFTTrainer.__init__).parameters.keys())
+    trainer_kwargs: Dict = dict(
         model=model,
-        args=sft_cfg,
+        args=args,
         train_dataset=ds,
-        tokenizer=tok,
     )
+    # TRL >= 0.12 renamed 'tokenizer' to 'processing_class'
+    if "processing_class" in trainer_sig:
+        trainer_kwargs["processing_class"] = tok
+    elif "tokenizer" in trainer_sig:
+        trainer_kwargs["tokenizer"] = tok
+
+    # dataset_text_field removed in TRL >= 0.12; use formatting_func instead
+    if args.__class__.__name__ != "SFTConfig":
+        if "dataset_text_field" in trainer_sig:
+            trainer_kwargs["dataset_text_field"] = "text"
+        elif "formatting_func" in trainer_sig:
+            # Must return a list of strings when called with a batch dict
+            trainer_kwargs["formatting_func"] = lambda examples: (
+                examples["text"] if isinstance(examples["text"], list) else [examples["text"]]
+            )
+
+        # max_seq_length lives on trainer in TRL < 0.12
+        if "max_seq_length" in trainer_sig:
+            trainer_kwargs["max_seq_length"] = max_seq_len
+
+    logger.info("SFTTrainer kwargs: %s", list(trainer_kwargs.keys()))
+    trainer = SFTTrainer(**trainer_kwargs)
     trainer.train()
     trainer.save_model(output_dir)
     tok.save_pretrained(output_dir)

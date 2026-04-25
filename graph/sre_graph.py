@@ -122,15 +122,14 @@ def _mock_network_intent(state_vec: list[float]) -> NetworkIntent:
     """
     traffic, _, net_health = state_vec
     if traffic > 85:
-        # BUG-FIX: was 'circuit_break' — must match _SYNERGY_TABLE key 'circuit_break'
-        return NetworkIntent(intent="circuit_break", confidence=0.90, rationale="Critical traffic load detected.")
+        return NetworkIntent(thought_process="Mock logic: Critical traffic", observed_anomalies=["High Traffic"], verified_root_cause="Traffic Spike", action="circuit_breaker", risk_score=0.90)
     if traffic > 70:
-        return NetworkIntent(intent="throttle", confidence=0.75, rationale="Elevated traffic requires throttling.")
+        return NetworkIntent(thought_process="Mock logic: Elevated traffic", observed_anomalies=["Elevated Traffic"], verified_root_cause="Load Imbalance", action="throttle_traffic", risk_score=0.75)
     if net_health < 30:
-        return NetworkIntent(intent="scale_out", confidence=0.80, rationale="Low network health; adding capacity.")
+        return NetworkIntent(thought_process="Mock logic: Low net health", observed_anomalies=["Low Network Health"], verified_root_cause="Capacity Limit", action="scale_out", risk_score=0.80)
     if traffic > 50:
-        return NetworkIntent(intent="load_balance", confidence=0.60, rationale="Moderate traffic, distributing load.")
-    return NetworkIntent(intent="noop", confidence=0.30, rationale="Traffic within acceptable bounds.")
+        return NetworkIntent(thought_process="Mock logic: Moderate traffic", observed_anomalies=["Moderate Traffic"], verified_root_cause="Uneven Load", action="load_balance", risk_score=0.60)
+    return NetworkIntent(thought_process="Mock logic: Nominal", observed_anomalies=[], verified_root_cause="Normal Operations", action="noop", risk_score=0.30)
 
 
 def _mock_db_intent(state_vec: list[float]) -> DBIntent:
@@ -139,12 +138,12 @@ def _mock_db_intent(state_vec: list[float]) -> DBIntent:
     """
     _, db_temp, _ = state_vec
     if db_temp > 85:
-        return DBIntent(intent="failover", confidence=0.92, rationale="DB temperature critical; initiating failover.")
+        return DBIntent(thought_process="Mock logic: DB temp critical", observed_anomalies=["High DB Temp"], verified_root_cause="DB Overload", action="schema_failover", risk_score=0.92)
     if db_temp > 70:
-        return DBIntent(intent="cache_flush", confidence=0.70, rationale="Elevated DB temperature; flushing cache.")
+        return DBIntent(thought_process="Mock logic: Elevated DB temp", observed_anomalies=["Elevated DB Temp"], verified_root_cause="Cache Misses", action="cache_flush", risk_score=0.70)
     if db_temp > 55:
-        return DBIntent(intent="cache_flush", confidence=0.55, rationale="Moderate DB load; cache flush precautionary.")
-    return DBIntent(intent="noop", confidence=0.25, rationale="DB temperature nominal.")
+        return DBIntent(thought_process="Mock logic: Moderate DB load", observed_anomalies=["Moderate DB Load"], verified_root_cause="Minor Contention", action="cache_flush", risk_score=0.55)
+    return DBIntent(thought_process="Mock logic: DB nominal", observed_anomalies=[], verified_root_cause="Normal Operations", action="noop", risk_score=0.25)
 
 
 _NETWORK_TO_ACTION: Dict[str, str] = {
@@ -243,9 +242,11 @@ def network_controller_node(
         raw = _call_llm(client, NETWORK_CONTROLLER_SYSTEM_PROMPT, user_msg)
         parsed = json.loads(raw)
         intent = NetworkIntent(
-            intent=parsed.get("intent", "noop"),
-            confidence=float(parsed.get("confidence", 0.5)),
-            rationale=parsed.get("rationale", ""),
+            thought_process=parsed.get("thought_process", ""),
+            observed_anomalies=parsed.get("observed_anomalies", []),
+            verified_root_cause=parsed.get("verified_root_cause", ""),
+            action=parsed.get("action", "noop"),
+            risk_score=float(parsed.get("risk_score", 0.5)),
         )
 
     state = append_chat(
@@ -280,9 +281,11 @@ def db_controller_node(
         raw = _call_llm(client, DATABASE_CONTROLLER_SYSTEM_PROMPT, user_msg)
         parsed = json.loads(raw)
         intent = DBIntent(
-            intent=parsed.get("intent", "noop"),
-            confidence=float(parsed.get("confidence", 0.5)),
-            rationale=parsed.get("rationale", ""),
+            thought_process=parsed.get("thought_process", ""),
+            observed_anomalies=parsed.get("observed_anomalies", []),
+            verified_root_cause=parsed.get("verified_root_cause", ""),
+            action=parsed.get("action", "noop"),
+            risk_score=float(parsed.get("risk_score", 0.5)),
         )
 
     state = append_chat(
@@ -306,14 +309,14 @@ def shadow_consensus_node(
     Falls back to LLM only for cases not in the table.
     """
     net_intent: NetworkIntent = state.get("network_intent") or NetworkIntent(
-        intent="noop", confidence=0.0, rationale="missing"
+        thought_process="missing", observed_anomalies=[], verified_root_cause="", action="noop", risk_score=0.0
     )
     db_intent: DBIntent = state.get("db_intent") or DBIntent(
-        intent="noop", confidence=0.0, rationale="missing"
+        thought_process="missing", observed_anomalies=[], verified_root_cause="", action="noop", risk_score=0.0
     )
 
-    net_key = net_intent["intent"]
-    db_key = db_intent["intent"]
+    net_key = net_intent.get("action", "noop")
+    db_key = db_intent.get("action", "noop")
     lookup_key = (net_key, db_key)
 
     action = _SYNERGY_TABLE.get(lookup_key)
@@ -335,11 +338,11 @@ def shadow_consensus_node(
     else:
         # Unknown combination – use LLM arbitration or fallback mock
         if mock_llm or client is None:
-            # Default: higher confidence controller wins
-            if net_intent["confidence"] >= db_intent["confidence"]:
-                recommended = _NETWORK_TO_ACTION.get(net_key, "noop")
+            # Default: higher risk score controller wins
+            if net_intent.get("risk_score", 0.0) >= db_intent.get("risk_score", 0.0):
+                recommended = net_key
             else:
-                recommended = _DB_TO_ACTION.get(db_key, "noop")
+                recommended = db_key
             consensus = ConsensusStatus.GREEN
             conflict_summary = None
             routing = RoutingPath.MIDDLE
@@ -358,19 +361,33 @@ def shadow_consensus_node(
             raw = _call_llm(client, LEAD_SRE_SYSTEM_PROMPT, user_msg)
             parsed = json.loads(raw)
             status_str = parsed.get("consensus_status", "red").lower()
-            consensus = ConsensusStatus.GREEN if status_str == "green" else ConsensusStatus.RED
+            if status_str == "green":
+                consensus = ConsensusStatus.GREEN
+                routing = RoutingPath.MIDDLE
+            elif status_str == "retry":
+                consensus = ConsensusStatus.RETRY
+                routing = RoutingPath.MIDDLE
+            else:
+                consensus = ConsensusStatus.RED
+                routing = RoutingPath.SLOW
             recommended = parsed.get("recommended_action")
             conflict_summary = parsed.get("conflict_summary")
-            routing = RoutingPath.MIDDLE if consensus == ConsensusStatus.GREEN else RoutingPath.SLOW
 
-    state = append_chat(
-        state,
-        role="lead_sre",
-        content=(
-            f"[Shadow Consensus] {consensus.value.upper()} | "
-            f"Action={recommended} | Conflict={conflict_summary}"
-        ),
-    )
+    if consensus == ConsensusStatus.RETRY:
+        state = append_chat(
+            state,
+            role="lead_sre",
+            content="[PENALTY] RETRY TRIGGERED. High risk action proposed without a prior diagnostic step (e.g. ping, top). You have been penalized. Rethink and verify your hypothesis.",
+        )
+    else:
+        state = append_chat(
+            state,
+            role="lead_sre",
+            content=(
+                f"[Shadow Consensus] {consensus.value.upper()} | "
+                f"Action={recommended} | Conflict={conflict_summary}"
+            ),
+        )
 
     return {  # type: ignore[return-value]
         **state,
@@ -510,10 +527,13 @@ def _route_after_dna(state: SREGraphState) -> Literal["executor_node", "network_
 
 def _route_after_consensus(
     state: SREGraphState,
-) -> Literal["executor_node", "chatops_node"]:
-    """Branch after shadow_consensus_node: GREEN → executor, RED → ChatOps."""
-    if state.get("consensus_status") == ConsensusStatus.GREEN:
+) -> Literal["executor_node", "chatops_node", "network_controller_node"]:
+    """Branch after shadow_consensus_node: GREEN → executor, RED → ChatOps, RETRY → network_controller_node."""
+    status = state.get("consensus_status")
+    if status == ConsensusStatus.GREEN:
         return "executor_node"
+    elif status == ConsensusStatus.RETRY:
+        return "network_controller_node"
     return "chatops_node"
 
 
@@ -602,6 +622,7 @@ def build_sre_graph(
         {
             "executor_node": "executor_node",
             "chatops_node": "chatops_node",
+            "network_controller_node": "network_controller_node",
         },
     )
 
