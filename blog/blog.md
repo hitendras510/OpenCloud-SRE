@@ -1,4 +1,3 @@
-```markdown
 # 🚀 OpenCloud-SRE: How We Built an Autonomous SRE System That Thinks 21× Faster
 
 > **Team:** VICODE O(1) | **Hackathon:** Meta PyTorch Hackathon 2026 | **Themes:** Multi-Agent Systems & Enterprise Workflows
@@ -150,4 +149,3 @@ The Streamlit-based `ui/app.py` provides a real-time window into the entire syst
 OpenCloud-SRE demonstrates that the future of enterprise AI isn't about calling an LLM for every decision — it's about **intelligently routing cognition** so the right amount of reasoning is applied to each situation.
 
 **OpenCloud-SRE: Turning Cloud Intelligence into an Enterprise Reflex.**
-```
