@@ -93,7 +93,6 @@ AI shouldn't have unchecked root access. We built deterministic safety nets to g
 We successfully trained our agent using **GRPO** for 3 epochs. The results demonstrate a significant improvement over the random baseline in both total reward and Mean Time To Recovery (MTTR).
 
 ![Training Performance](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/evaluation/training_performance.png)
-![Governance Layers](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/blog/governance_layer.png)
 
 * **MTTR (Recovery Speed):** 80% faster for recurring incidents via DNA Memory hits.
 * **Operational Cost:** 90% reduction in token spend via Fast and Middle routing paths.
