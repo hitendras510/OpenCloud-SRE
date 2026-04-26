@@ -32,8 +32,6 @@ We drew inspiration from how expert engineers actually think. A senior SRE who h
 
 We encoded this into a **3-Tier Cognitive Compression Routing Architecture** built on LangGraph:
 
-![Architecture Diagram](architecture_diagram.jpg)
-
 Every cloud incident flows through this graph in milliseconds. Let's walk through each tier.
 
 ---
@@ -84,8 +82,6 @@ In this case, a dedicated **ChatOps LLM** receives the full context and performs
 
 AI shouldn't have unchecked root access to production infrastructure. Between the Shadow Consensus and the Executor, every proposed action must pass through the `LeadSRENode`.
 
-![Governance Layers](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/blog/governance_layer.png)
-
 ### Predictive Blast Radius Filter 💥
 This is our hallucination kill switch. A static `BLAST_RADIUS_MAP` maps every possible action to its known secondary impacts. 
 **State-aware escalation:** A `circuit_breaker` is only `CRITICAL` risk if the database is *simultaneously* in failover territory. If the filter detects `CRITICAL`, the action is **rejected outright**.
@@ -118,7 +114,7 @@ We built a complete training pipeline to replace generic base models with fine-t
 **Training Results:**
 We successfully trained our agent for 3 epochs. As shown below, the GRPO agent significantly out-learned the random baseline, driving down the Mean Time To Recovery (MTTR).
 
-![Training Performance](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/evaluation/training_performance.png)
+![Training Performance](../evaluation/training_performance.png)
 
 ---
 
