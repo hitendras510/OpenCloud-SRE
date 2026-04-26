@@ -594,3 +594,481 @@ hr { border-color: var(--border-dim) !important; margin: 12px 0 !important; }
 }
 .astat-num  { font-family: var(--font-display); font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; }
 .astat-lbl  { font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-4); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 5px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HOMEPAGE — Landing Page Components
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─── HERO SECTION ──────────────────────────────────────────────────── */
+.hp-hero {
+  position: relative;
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 60%, var(--void) 100%);
+  border: 1px solid rgba(0,212,255,0.12);
+  border-radius: var(--r6);
+  padding: 56px 52px 48px;
+  margin-bottom: 36px;
+  overflow: hidden;
+  text-align: center;
+}
+.hp-hero::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 70% 60% at 20% -10%, rgba(0,212,255,0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 50% at 80%  15%, rgba(99,102,241,0.09) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 35% at 50% 110%, rgba(16,185,129,0.05) 0%, transparent 55%);
+  pointer-events: none;
+}
+.hp-hero::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,212,255,0.6) 30%, rgba(99,102,241,0.6) 70%, transparent 100%);
+}
+.hp-hero-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.68rem; font-weight: 600;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--cyan);
+  background: rgba(0,212,255,0.08);
+  border: 1px solid rgba(0,212,255,0.2);
+  border-radius: 999px;
+  padding: 5px 18px;
+  display: inline-block;
+  margin-bottom: 22px;
+  position: relative; z-index: 1;
+}
+.hp-hero-title {
+  font-family: var(--font-display);
+  font-size: clamp(2.2rem, 4vw, 3.4rem);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  background: linear-gradient(135deg, #f0f6fc 0%, #00d4ff 35%, #818cf8 65%, #ec4899 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin: 0 0 18px;
+  position: relative; z-index: 1;
+}
+.hp-hero-sub {
+  font-family: var(--font-body);
+  font-size: 1.05rem; font-weight: 400;
+  color: var(--text-3);
+  max-width: 680px;
+  margin: 0 auto 28px;
+  line-height: 1.7;
+  position: relative; z-index: 1;
+}
+.hp-hero-badges {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  justify-content: center; align-items: center;
+  position: relative; z-index: 1;
+  margin-bottom: 36px;
+}
+.hp-badge {
+  font-family: var(--font-mono);
+  font-size: 0.65rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 6px 16px; border-radius: 999px;
+  border: 1px solid;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.hp-badge:hover { transform: translateY(-2px); }
+.hp-badge-cyan   { color: var(--cyan);    border-color: rgba(0,212,255,0.3);    background: rgba(0,212,255,0.08); }
+.hp-badge-indigo { color: #818cf8;        border-color: rgba(99,102,241,0.3);   background: rgba(99,102,241,0.08); }
+.hp-badge-emerald{ color: var(--emerald); border-color: rgba(16,185,129,0.3);   background: rgba(16,185,129,0.08); }
+.hp-badge-amber  { color: var(--amber);   border-color: rgba(245,158,11,0.3);   background: rgba(245,158,11,0.08); }
+.hp-badge-rose   { color: var(--rose);    border-color: rgba(244,63,94,0.3);    background: rgba(244,63,94,0.08); }
+.hp-badge-pink   { color: var(--pink);    border-color: rgba(236,72,153,0.3);   background: rgba(236,72,153,0.08); }
+
+/* ─── KPI STRIP ─────────────────────────────────────────────────────── */
+.hp-kpi-strip {
+  display: flex; gap: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r4);
+  overflow: hidden;
+  position: relative; z-index: 1;
+}
+.hp-kpi {
+  flex: 1; padding: 20px 16px; text-align: center;
+  border-right: 1px solid var(--border-dim);
+  position: relative;
+  transition: background 0.2s ease;
+}
+.hp-kpi:last-child { border-right: none; }
+.hp-kpi:hover { background: rgba(255,255,255,0.02); }
+.hp-kpi-val {
+  font-family: var(--font-display);
+  font-size: 2rem; font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.hp-kpi-label {
+  font-family: var(--font-mono);
+  font-size: 0.58rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--text-4);
+}
+.hp-kpi-badge {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--emerald);
+  background: rgba(16,185,129,0.1);
+  border: 1px solid rgba(16,185,129,0.2);
+  border-radius: 999px;
+  padding: 2px 8px;
+  display: inline-block;
+  margin-top: 5px;
+}
+
+/* ─── SECTION HEADERS (homepage) ────────────────────────────────────── */
+.hp-section-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+.hp-section-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.64rem; font-weight: 600;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--cyan);
+  margin-bottom: 10px;
+}
+.hp-section-title {
+  font-family: var(--font-display);
+  font-size: 1.9rem; font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text-1);
+  margin: 0 0 10px;
+}
+.hp-section-desc {
+  font-family: var(--font-body);
+  font-size: 0.92rem; color: var(--text-3);
+  max-width: 560px;
+  margin: 0 auto;
+  line-height: 1.65;
+}
+
+/* ─── FEATURE CARDS ─────────────────────────────────────────────────── */
+.hp-feature-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r5);
+  padding: 28px 26px 24px;
+  height: 100%;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+.hp-feature-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--fc-accent, linear-gradient(90deg, var(--cyan), var(--indigo)));
+  opacity: 0.7;
+  transition: opacity 0.3s ease;
+}
+.hp-feature-card:hover {
+  border-color: rgba(255,255,255,0.1);
+  background: var(--surface-2);
+  transform: translateY(-4px);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+}
+.hp-feature-card:hover::before { opacity: 1; }
+.hp-fc-icon {
+  width: 52px; height: 52px;
+  border-radius: var(--r4);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.6rem;
+  margin-bottom: 18px;
+  background: var(--fc-icon-bg, rgba(0,212,255,0.1));
+  border: 1px solid var(--fc-icon-border, rgba(0,212,255,0.2));
+}
+.hp-fc-title {
+  font-family: var(--font-display);
+  font-size: 1.05rem; font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 10px;
+}
+.hp-fc-desc {
+  font-family: var(--font-body);
+  font-size: 0.86rem; color: var(--text-3);
+  line-height: 1.65;
+  margin-bottom: 16px;
+}
+.hp-fc-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid; margin-right: 5px; margin-bottom: 5px;
+}
+
+/* ─── ROUTING TIERS (visual diagram) ────────────────────────────────── */
+.hp-tier-row {
+  display: flex; gap: 0; align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r5);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.hp-tier-icon {
+  width: 72px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem;
+  border-right: 1px solid var(--border-dim);
+}
+.hp-tier-body {
+  flex: 1; padding: 18px 22px;
+}
+.hp-tier-name {
+  font-family: var(--font-display);
+  font-size: 0.88rem; font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.hp-tier-caption {
+  font-family: var(--font-mono);
+  font-size: 0.68rem; color: var(--text-3);
+  line-height: 1.6;
+}
+.hp-tier-meta {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-top: 8px;
+}
+.hp-tier-stat {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid; font-weight: 600;
+}
+.hp-tier-right {
+  flex-shrink: 0; padding: 18px 22px;
+  display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+  border-left: 1px solid var(--border-dim);
+  text-align: right; min-width: 130px;
+}
+.hp-tier-tokens {
+  font-family: var(--font-display);
+  font-size: 1.4rem; font-weight: 900;
+  line-height: 1;
+}
+.hp-tier-tokens-label {
+  font-family: var(--font-mono);
+  font-size: 0.56rem; color: var(--text-4);
+  letter-spacing: 0.12em; text-transform: uppercase;
+  margin-top: 3px;
+}
+
+/* ─── HOW IT WORKS STEPS ─────────────────────────────────────────────── */
+.hp-step {
+  display: flex; gap: 20px; align-items: flex-start;
+  margin-bottom: 28px;
+  position: relative;
+}
+.hp-step-connector {
+  position: absolute;
+  left: 23px; top: 56px;
+  width: 2px; height: calc(100% - 12px);
+  background: linear-gradient(180deg, var(--border-dim) 0%, transparent 100%);
+}
+.hp-step-num {
+  flex-shrink: 0;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display);
+  font-size: 1rem; font-weight: 900;
+  position: relative; z-index: 1;
+}
+.hp-step-body {
+  flex: 1; padding-top: 6px;
+}
+.hp-step-title {
+  font-family: var(--font-display);
+  font-size: 1rem; font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 5px;
+}
+.hp-step-desc {
+  font-family: var(--font-body);
+  font-size: 0.86rem; color: var(--text-3);
+  line-height: 1.65;
+}
+.hp-step-code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r2);
+  padding: 8px 12px;
+  margin-top: 10px;
+  line-height: 1.6;
+}
+
+/* ─── TECH STACK GRID ────────────────────────────────────────────────── */
+.hp-tech-grid {
+  display: flex; gap: 10px; flex-wrap: wrap;
+}
+.hp-tech-chip {
+  display: flex; align-items: center; gap: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r3);
+  padding: 10px 16px;
+  transition: all 0.2s ease;
+  flex: 0 0 auto;
+}
+.hp-tech-chip:hover {
+  border-color: rgba(255,255,255,0.1);
+  background: var(--surface-2);
+  transform: translateY(-2px);
+}
+.hp-tech-icon { font-size: 1.2rem; flex-shrink: 0; }
+.hp-tech-name {
+  font-family: var(--font-display);
+  font-size: 0.8rem; font-weight: 700;
+  color: var(--text-1);
+}
+.hp-tech-role {
+  font-family: var(--font-mono);
+  font-size: 0.58rem; color: var(--text-4);
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+
+/* ─── COMPARISON TABLE ───────────────────────────────────────────────── */
+.hp-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.hp-compare-table th {
+  font-family: var(--font-display);
+  font-size: 0.72rem; font-weight: 700;
+  color: var(--text-4); letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-dim);
+  text-align: left;
+}
+.hp-compare-table td {
+  padding: 11px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+.hp-compare-table tr:last-child td { border-bottom: none; }
+.hp-compare-table tr:hover td { background: rgba(255,255,255,0.02); }
+.hp-col-ours { color: var(--cyan) !important; font-weight: 700; }
+.hp-col-bad  { color: rgba(244,63,94,0.7); }
+.hp-compare-table .hp-check { color: var(--emerald); font-size: 1rem; }
+.hp-compare-table .hp-cross { color: rgba(244,63,94,0.7); font-size: 1rem; }
+
+/* ─── AGENT DIAGRAM ──────────────────────────────────────────────────── */
+.hp-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.hp-agent-card {
+  background: var(--surface);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r4);
+  padding: 16px 14px;
+  text-align: center;
+  transition: all 0.25s ease;
+  position: relative; overflow: hidden;
+}
+.hp-agent-card::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+  background: var(--ag-color, var(--cyan));
+  opacity: 0.5;
+}
+.hp-agent-card:hover {
+  background: var(--surface-2);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.hp-agent-icon { font-size: 1.8rem; margin-bottom: 8px; display: block; }
+.hp-agent-name {
+  font-family: var(--font-display);
+  font-size: 0.78rem; font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 4px;
+}
+.hp-agent-role {
+  font-family: var(--font-mono);
+  font-size: 0.6rem; color: var(--text-4);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  line-height: 1.5;
+}
+
+/* ─── HIGHLIGHT QUOTE ────────────────────────────────────────────────── */
+.hp-quote {
+  background: linear-gradient(135deg, rgba(0,212,255,0.05), rgba(99,102,241,0.05));
+  border: 1px solid rgba(0,212,255,0.15);
+  border-left: 3px solid var(--cyan);
+  border-radius: var(--r3);
+  padding: 18px 22px;
+  margin: 20px 0;
+  position: relative;
+}
+.hp-quote-text {
+  font-family: var(--font-display);
+  font-size: 0.95rem; font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.6;
+  font-style: italic;
+}
+.hp-quote-source {
+  font-family: var(--font-mono);
+  font-size: 0.62rem; color: var(--cyan);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  margin-top: 10px;
+}
+
+/* ─── DIVIDER ────────────────────────────────────────────────────────── */
+.hp-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--border-dim) 30%, var(--border-dim) 70%, transparent 100%);
+  margin: 40px 0;
+}
+
+/* ─── CTA STRIP ──────────────────────────────────────────────────────── */
+.hp-cta {
+  background: linear-gradient(135deg, rgba(0,212,255,0.06), rgba(99,102,241,0.06));
+  border: 1px solid rgba(0,212,255,0.15);
+  border-radius: var(--r5);
+  padding: 32px 36px;
+  text-align: center;
+  position: relative; overflow: hidden;
+}
+.hp-cta::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,212,255,0.4), rgba(99,102,241,0.4), transparent);
+}
+.hp-cta-title {
+  font-family: var(--font-display);
+  font-size: 1.4rem; font-weight: 800;
+  color: var(--text-1); margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+.hp-cta-desc {
+  font-family: var(--font-body);
+  font-size: 0.88rem; color: var(--text-3);
+  line-height: 1.6; margin-bottom: 20px;
+}
+
+/* ─── SCROLL ANIMATIONS ──────────────────────────────────────────────── */
+@keyframes hp-fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hp-animate { animation: hp-fade-up 0.6s ease forwards; }
+.hp-animate-1 { animation-delay: 0.05s; }
+.hp-animate-2 { animation-delay: 0.12s; }
+.hp-animate-3 { animation-delay: 0.18s; }
+.hp-animate-4 { animation-delay: 0.24s; }
+
