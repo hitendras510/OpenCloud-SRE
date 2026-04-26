@@ -340,12 +340,18 @@ if st.session_state.page == "home":
       </div>
       <div class="hp-hero-badges">
         <span class="hp-badge hp-badge-cyan">🧬 DNA FAISS Memory</span>
-        <span class="hp-badge hp-badge-indigo">🤝 Shadow Consensus</span>
-        <span class="hp-badge hp-badge-emerald">🛡️ Blast Radius Filter</span>
-        <span class="hp-badge hp-badge-amber">⏳ Trust Escrow</span>
-        <span class="hp-badge hp-badge-rose">🔒 Partial Observability</span>
-        <span class="hp-badge hp-badge-pink">🏋 GRPO Fine-Tuning</span>
       </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # ── Centered Launch Button ────────────────────────────────────────────────
+    _, mid_col, _ = st.columns([1, 1, 1])
+    with mid_col:
+        if st.button("🚀 LAUNCH NEXUS COMMAND CENTER", type="primary", use_container_width=True):
+            _go("dashboard")
+
+    st.markdown("""
+    <div class="hp-hero hp-animate" style="margin-top:-60px; padding-top:0; border-top:none; border-top-left-radius:0; border-top-right-radius:0;">
       <div class="hp-kpi-strip">
         <div class="hp-kpi">
           <div class="hp-kpi-val" style="color:#00d4ff">21×</div>

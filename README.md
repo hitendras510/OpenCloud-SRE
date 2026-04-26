@@ -11,12 +11,16 @@ pinned: false
 # 🚀 OpenCloud-SRE
 **Scaling Cloud Reliability through Cognitive Compression**
 
+[![Hugging Face Space](https://img.shields.io/badge/🤗_Live_Demo-Hugging_Face_Space-blue?style=for-the-badge)](https://huggingface.co/spaces/hitendras510/OpenCloud-SRE)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hitendras510/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
+
 ![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)
 ![PyTorch](https://img.shields.io/badge/PyTorch-Simulation_Engine-EE4C2C?logo=pytorch)
 ![OpenEnv](https://img.shields.io/badge/Framework-OpenEnv-brightgreen)
 ![FAISS](https://img.shields.io/badge/Vector_Memory-FAISS-purple)
 ![FastAPI](https://img.shields.io/badge/Microservice-FastAPI-009688?logo=fastapi)
 ![Streamlit](https://img.shields.io/badge/Control_Plane-Streamlit-FF4B4B?logo=streamlit)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hitendras510/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
 
 **Team:** VICODE O(1)  
 **Target Themes:** Multi-Agent Systems (Theme 1) & Enterprise Workflows (Theme 3.1)
@@ -78,6 +82,11 @@ AI shouldn't have unchecked root access. We built deterministic safety nets to g
 ---
 
 ## 📊 Key Results / "The Judge's Metrics"
+
+We successfully trained our agent using **GRPO** for 3 epochs. The results demonstrate a significant improvement over the random baseline in both total reward and Mean Time To Recovery (MTTR).
+
+![Training Performance](evaluation/training_performance.png)
+
 * **MTTR (Recovery Speed):** 80% faster for recurring incidents via DNA Memory hits.
 * **Operational Cost:** 90% reduction in token spend via Fast and Middle routing paths.
 * **Safety Rating:** 100% block rate on "Known Critical" cascading failures via our Blast Radius Matrix.
@@ -88,6 +97,7 @@ AI shouldn't have unchecked root access. We built deterministic safety nets to g
 
 Instead of hooking up to a real cloud provider during training, we built a 100% open-source, RL-compatible stochastic environment:
 * **The Stateful API (`env/server.py`):** A high-speed FastAPI simulation of an enterprise data center. The state is held in a `GlobalStateManager` that reacts to both AI actions and manual user injections.
+* **OpenEnv Manifest (`env/openenv.yaml`):** Standard manifest declaring the environment for the hackathon evaluator.
 * **Action Space:** Discrete actions (`throttle_traffic`, `schema_failover`, `circuit_breaker`, `kill_long_queries`), each designed to mitigate specific vectors of infrastructure collapse.
 
 ---

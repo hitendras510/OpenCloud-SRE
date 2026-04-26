@@ -1,0 +1,21 @@
+spec_version: "1.0"
+name: "OpenCloudEnv"
+type: "standard"
+runtime:
+  image: "huggingface/opencloud-sre:latest"
+app:
+  port: 8000
+actions:
+  - throttle_traffic
+  - load_balance
+  - schema_failover
+  - cache_flush
+  - circuit_breaker
+  - restart_pods
+  - scale_out
+  - noop
+metrics:
+  - Traffic_Load
+  - Database_Temperature
+  - Network_Health
+  - slo_score

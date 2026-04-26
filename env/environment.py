@@ -208,6 +208,20 @@ class OpenCloudEnv:
         """Return a plain-dict observation from the current state tensor."""
         return self.state.named_metrics()
 
+    def state(self) -> Dict[str, Any]:
+        """
+        OpenEnv-standard state method.
+        Provides access to current episode metadata and tracking variables.
+        """
+        return {
+            "step_count": self._step_count,
+            "max_steps": self.max_steps,
+            "is_critical": self.state.is_critical(),
+            "slo_score": self.state.slo_score(),
+            "action_history": list(self._action_history),
+            "episode_rewards": list(self._episode_rewards),
+        }
+
     def render(self, mode: str = "human") -> Optional[str]:
         """Print or return a human-readable snapshot of the current state."""
         snapshot = (
