@@ -118,7 +118,7 @@ We built a complete training pipeline to replace generic base models with fine-t
 **Training Results:**
 We successfully trained our agent for 3 epochs. As shown below, the GRPO agent significantly out-learned the random baseline, driving down the Mean Time To Recovery (MTTR).
 
-![Training Performance](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/evaluation/training_performance.png)
+![Training Performance](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/evaluation/training_performance.png)
 
 ---
 
