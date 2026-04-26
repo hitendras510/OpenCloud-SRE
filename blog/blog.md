@@ -84,7 +84,7 @@ In this case, a dedicated **ChatOps LLM** receives the full context and performs
 
 AI shouldn't have unchecked root access to production infrastructure. Between the Shadow Consensus and the Executor, every proposed action must pass through the `LeadSRENode`.
 
-![Governance Layers](governance_layer.png)
+![Governance Layers](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/blog/governance_layer.png)
 
 ### Predictive Blast Radius Filter 💥
 This is our hallucination kill switch. A static `BLAST_RADIUS_MAP` maps every possible action to its known secondary impacts. 
@@ -118,7 +118,7 @@ We built a complete training pipeline to replace generic base models with fine-t
 **Training Results:**
 We successfully trained our agent for 3 epochs. As shown below, the GRPO agent significantly out-learned the random baseline, driving down the Mean Time To Recovery (MTTR).
 
-![Training Performance](training_performance.png)
+![Training Performance](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/evaluation/training_performance.png)
 
 ---
 
