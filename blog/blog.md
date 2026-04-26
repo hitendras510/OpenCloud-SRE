@@ -2,8 +2,8 @@
 
 > **Team:** VICODE O(1) | **Hackathon:** Meta PyTorch Hackathon 2026 | **Themes:** Multi-Agent Systems & Enterprise Workflows
 
-[![Hugging Face Space](https://img.shields.io/badge/🤗_Live_Demo-Hugging_Face_Space-blue?style=for-the-badge)](https://huggingface.co/spaces/hitendras510/OpenCloud-SRE)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hitendras510/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
+[![Hugging Face Space](https://img.shields.io/badge/🤗_Live_Demo-Hugging_Face_Space-blue?style=for-the-badge)](https://huggingface.co/spaces/dhruv0431-sketch/OpenCloud-SRE)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dhruv0431-sketch/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
 ---
 
 ## The Problem We Set Out to Solve
