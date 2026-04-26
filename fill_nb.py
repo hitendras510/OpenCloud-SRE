@@ -1,4 +1,6 @@
-{
+import json
+
+nb = {
  "cells": [
   {
    "cell_type": "markdown",
@@ -14,7 +16,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": None,
    "metadata": {},
    "outputs": [],
    "source": [
@@ -25,7 +27,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": None,
    "metadata": {},
    "outputs": [],
    "source": [
@@ -45,7 +47,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": None,
    "metadata": {},
    "outputs": [],
    "source": [
@@ -63,7 +65,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": None,
    "metadata": {},
    "outputs": [],
    "source": [
@@ -81,7 +83,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": None,
    "metadata": {},
    "outputs": [],
    "source": [
@@ -106,3 +108,8 @@
  "nbformat": 4,
  "nbformat_minor": 4
 }
+
+with open("notebooks/OpenCloud_SRE_Training.ipynb", "w", encoding="utf-8") as f:
+    json.dump(nb, f, indent=1)
+
+print("Notebook completely rebuilt for full Colab Pipeline!")
