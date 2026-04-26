@@ -22,6 +22,8 @@ pinned: false
 ![Streamlit](https://img.shields.io/badge/Control_Plane-Streamlit-FF4B4B?logo=streamlit)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hitendras510/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
 
+📖 **Want to dive deeper into our architecture?** [Read our full Engineering Blog Post here](./blog/blog.md)
+
 **Team:** VICODE O(1)  
 **Target Themes:** Multi-Agent Systems (Theme 1) & Enterprise Workflows (Theme 3.1)
 
