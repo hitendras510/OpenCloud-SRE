@@ -209,7 +209,7 @@ with st.sidebar:
                 st.toast(f"Error injecting fault: {e}")
             
     st.divider()
-    st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.58rem;color:#484f58;text-align:center;letter-spacing:.06em">OpenCloud-SRE · Cognitive Compression<br>Meta PyTorch · Hackathon 2025</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.58rem;color:#484f58;text-align:center;letter-spacing:.06em">OpenCloud-SRE · Cognitive Compression<br>Meta PyTorch · Hackathon 2026</div>', unsafe_allow_html=True)
 
     # ── Routing legend + Chaos (dashboard only) ──────────────────────────────
     if st.session_state.page == "dashboard":
@@ -330,7 +330,7 @@ if st.session_state.page == "home":
     # ── HERO ──────────────────────────────────────────────────────────────────
     st.markdown("""
     <div class="hp-hero hp-animate">
-      <div class="hp-hero-eyebrow">⚡ Meta PyTorch Hackathon 2025</div>
+      <div class="hp-hero-eyebrow">⚡ Meta PyTorch Hackathon 2026</div>
       <div class="hp-hero-title">OpenCloud-SRE<br>Cognitive Compression Engine</div>
       <div class="hp-hero-sub">
         The world's first autonomous SRE system powered by <strong>Cognitive Compression</strong> —
