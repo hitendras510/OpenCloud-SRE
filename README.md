@@ -11,8 +11,8 @@ pinned: false
 # 🚀 OpenCloud-SRE
 **Scaling Cloud Reliability through Cognitive Compression**
 
-[![Hugging Face Space](https://img.shields.io/badge/🤗_Live_Demo-Hugging_Face_Space-blue?style=for-the-badge)](https://huggingface.co/spaces/dhruv0431-sketch/OpenCloud-SRE)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dhruv0431-sketch/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
+[![Hugging Face Space](https://img.shields.io/badge/🤗_Live_Demo-Hugging_Face_Space-blue?style=for-the-badge)](https://huggingface.co/spaces/hitendras510/OpenCloud-SRE)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hitendras510/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
 
 ![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)
 ![PyTorch](https://img.shields.io/badge/PyTorch-Simulation_Engine-EE4C2C?logo=pytorch)
@@ -20,7 +20,7 @@ pinned: false
 ![FAISS](https://img.shields.io/badge/Vector_Memory-FAISS-purple)
 ![FastAPI](https://img.shields.io/badge/Microservice-FastAPI-009688?logo=fastapi)
 ![Streamlit](https://img.shields.io/badge/Control_Plane-Streamlit-FF4B4B?logo=streamlit)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dhruv0431-sketch/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hitendras510/OpenCloud-SRE/blob/main/notebooks/OpenCloud_SRE_Training.ipynb)
 
 📖 **Want to dive deeper into our architecture?** [Read our full Engineering Blog Post here](./blog/blog.md)
 
@@ -121,7 +121,7 @@ The entire stack is designed to run in a single containerized environment, manag
 
 **Linux / macOS:**
 ```bash
-git clone https://github.com/dhruv0431-sketch/OpenCloud-SRE.git
+git clone https://github.com/hitendras510/OpenCloud-SRE.git
 cd OpenCloud-SRE
 python3 -m venv venv
 source venv/bin/activate
@@ -130,7 +130,7 @@ pip install -r requirements.txt
 
 **Windows (PowerShell):**
 ```powershell
-git clone https://github.com/dhruv0431-sketch/OpenCloud-SRE.git
+git clone https://github.com/hitendras510/OpenCloud-SRE.git
 cd OpenCloud-SRE
 python -m venv venv
 .\venv\Scripts\activate
