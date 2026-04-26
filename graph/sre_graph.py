@@ -228,22 +228,23 @@ _DB_TO_ACTION: Dict[str, str] = {
     "noop": "noop",
 }
 
-# Synergy table: (net_intent, db_intent) → action or ESCALATE
+# Synergy table: (net_action, db_action) → resolved_env_action or ESCALATE
+# Keys must match the 'action' field values emitted by NetworkIntent/DBIntent.
 _SYNERGY_TABLE: Dict[tuple[str, str], str] = {
-    ("throttle", "noop"): "throttle_traffic",
-    ("circuit_break", "noop"): "circuit_breaker",
-    ("load_balance", "noop"): "load_balance",
-    ("scale_out", "noop"): "scale_out",
-    ("noop", "failover"): "schema_failover",
-    ("noop", "cache_flush"): "cache_flush",
-    ("noop", "restart"): "restart_pods",
-    ("noop", "noop"): "noop",
-    ("throttle", "failover"): "schema_failover",
-    ("scale_out", "cache_flush"): "scale_out",
-    ("load_balance", "cache_flush"): "cache_flush",
-    ("circuit_break", "failover"): "ESCALATE",
-    ("circuit_break", "restart"): "ESCALATE",
-    ("load_balance", "failover"): "ESCALATE",
+    ("throttle_traffic",  "noop"):            "throttle_traffic",
+    ("circuit_breaker",   "noop"):            "circuit_breaker",
+    ("load_balance",      "noop"):            "load_balance",
+    ("scale_out",         "noop"):            "scale_out",
+    ("noop",              "schema_failover"): "schema_failover",
+    ("noop",              "cache_flush"):     "cache_flush",
+    ("noop",              "restart_pods"):    "restart_pods",
+    ("noop",              "noop"):            "noop",
+    ("throttle_traffic",  "schema_failover"): "schema_failover",
+    ("scale_out",         "cache_flush"):     "scale_out",
+    ("load_balance",      "cache_flush"):     "cache_flush",
+    ("circuit_breaker",   "schema_failover"): "ESCALATE",
+    ("circuit_breaker",   "restart_pods"):    "ESCALATE",
+    ("load_balance",      "schema_failover"): "ESCALATE",
 }
 
 
@@ -622,11 +623,18 @@ def chatops_node(
 
     if mock_llm or client is None:
         # Mock: pick the higher-confidence intent's corresponding action
+        # NetworkIntent / DBIntent use 'risk_score' (lower = more confident)
         if net_intent and db_intent:
-            if net_intent["confidence"] >= db_intent["confidence"]:
-                resolved = _NETWORK_TO_ACTION.get(net_intent["intent"], "noop")
+            net_risk = float(net_intent.get("risk_score", 0.5))  # type: ignore[typeddict-item]
+            db_risk  = float(db_intent.get("risk_score", 0.5))   # type: ignore[typeddict-item]
+            if net_risk <= db_risk:   # lower risk_score = more confident
+                resolved = net_intent.get("action", "noop")  # type: ignore[typeddict-item]
+                if resolved not in VALID_ACTIONS:
+                    resolved = "noop"
             else:
-                resolved = _DB_TO_ACTION.get(db_intent["intent"], "noop")
+                resolved = db_intent.get("action", "noop")   # type: ignore[typeddict-item]
+                if resolved not in VALID_ACTIONS:
+                    resolved = "noop"
         else:
             resolved = "noop"
         risk = "medium"

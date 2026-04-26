@@ -86,42 +86,43 @@ _CONFLICT = "DEEP_NEGOTIATE"
 
 _SYNERGY_MATRIX: Dict[Tuple[str, str], Tuple[str, Optional[str]]] = {
     # ── Clear-cut GREEN (single-domain actions) ───────────────────────────
-    ("throttle",      "noop"):        (_FAST,     "throttle_traffic"),
-    ("circuit_break", "noop"):        (_FAST,     "circuit_breaker"),
-    ("load_balance",  "noop"):        (_FAST,     "load_balance"),
-    ("scale_out",     "noop"):        (_FAST,     "scale_out"),
-    ("noop",          "failover"):    (_FAST,     "schema_failover"),
-    ("noop",          "cache_flush"): (_FAST,     "cache_flush"),
-    ("noop",          "restart"):     (_FAST,     "restart_pods"),
-    ("noop",          "noop"):        (_FAST,     "noop"),
+    # Keys use the full 'action' strings from NetworkIntent/DBIntent
+    ("throttle_traffic",  "noop"):            (_FAST,     "throttle_traffic"),
+    ("circuit_breaker",   "noop"):            (_FAST,     "circuit_breaker"),
+    ("load_balance",      "noop"):            (_FAST,     "load_balance"),
+    ("scale_out",         "noop"):            (_FAST,     "scale_out"),
+    ("noop",              "schema_failover"): (_FAST,     "schema_failover"),
+    ("noop",              "cache_flush"):     (_FAST,     "cache_flush"),
+    ("noop",              "restart_pods"):    (_FAST,     "restart_pods"),
+    ("noop",              "noop"):            (_FAST,     "noop"),
     # ── Compound GREEN (compatible cross-domain pairs) ────────────────────
-    ("throttle",      "failover"):    (_FAST,     "schema_failover"),
-    ("throttle",      "cache_flush"): (_FAST,     "throttle_traffic"),
-    ("throttle",      "restart"):     (_FAST,     "throttle_traffic"),
-    ("scale_out",     "cache_flush"): (_FAST,     "scale_out"),
-    ("scale_out",     "failover"):    (_FAST,     "scale_out"),
-    ("load_balance",  "cache_flush"): (_FAST,     "cache_flush"),
-    ("load_balance",  "restart"):     (_FAST,     "restart_pods"),
+    ("throttle_traffic",  "schema_failover"): (_FAST,     "schema_failover"),
+    ("throttle_traffic",  "cache_flush"):     (_FAST,     "throttle_traffic"),
+    ("throttle_traffic",  "restart_pods"):    (_FAST,     "throttle_traffic"),
+    ("scale_out",         "cache_flush"):     (_FAST,     "scale_out"),
+    ("scale_out",         "schema_failover"): (_FAST,     "scale_out"),
+    ("load_balance",      "cache_flush"):     (_FAST,     "cache_flush"),
+    ("load_balance",      "restart_pods"):    (_FAST,     "restart_pods"),
     # ── RED conflicts (dual-isolation / resource contention) ──────────────
-    ("circuit_break", "failover"):    (_CONFLICT, None),
-    ("circuit_break", "restart"):     (_CONFLICT, None),
-    ("circuit_break", "cache_flush"): (_CONFLICT, None),
-    ("load_balance",  "failover"):    (_CONFLICT, None),
-    ("scale_out",     "restart"):     (_CONFLICT, None),
+    ("circuit_breaker",   "schema_failover"): (_CONFLICT, None),
+    ("circuit_breaker",   "restart_pods"):    (_CONFLICT, None),
+    ("circuit_breaker",   "cache_flush"):     (_CONFLICT, None),
+    ("load_balance",      "schema_failover"): (_CONFLICT, None),
+    ("scale_out",         "restart_pods"):    (_CONFLICT, None),
 }
 
 _NET_TO_ACTION: Dict[str, str] = {
-    "throttle":      "throttle_traffic",
-    "circuit_break": "circuit_breaker",
+    "throttle_traffic":  "throttle_traffic",
+    "circuit_breaker":   "circuit_breaker",
     "load_balance":  "load_balance",
     "scale_out":     "scale_out",
     "noop":          "noop",
 }
 _DB_TO_ACTION: Dict[str, str] = {
-    "failover":    "schema_failover",
-    "cache_flush": "cache_flush",
-    "restart":     "restart_pods",
-    "noop":        "noop",
+    "schema_failover": "schema_failover",
+    "cache_flush":     "cache_flush",
+    "restart_pods":    "restart_pods",
+    "noop":            "noop",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -293,11 +294,13 @@ def _compute_combined_confidence(
     db_intent: DBIntent,
 ) -> float:
     """
-    Combined confidence = weighted average of both agents' confidence scores.
+    Combined confidence = weighted average of both agents' risk_scores (inverted to confidence).
+    NetworkIntent and DBIntent use 'risk_score' (0–1, higher = riskier).
+    We treat (1 - risk_score) as confidence for the trust layer calculation.
     The agent with the higher individual confidence is weighted 60/40.
     """
-    nc = net_intent["confidence"]
-    dc = db_intent["confidence"]
+    nc = 1.0 - float(net_intent.get("risk_score", 0.5))
+    dc = 1.0 - float(db_intent.get("risk_score", 0.5))
     if nc >= dc:
         return round(nc * 0.60 + dc * 0.40, 4)
     return round(dc * 0.60 + nc * 0.40, 4)
@@ -362,8 +365,9 @@ class LeadSRENode:
         -------
         (signal, resolved_action_or_None, conflict_description_or_empty)
         """
-        net_key = net_intent["intent"]
-        db_key = db_intent["intent"]
+        # NetworkIntent / DBIntent use 'action' (not 'intent')
+        net_key = net_intent.get("action", "noop")  # type: ignore[typeddict-item]
+        db_key = db_intent.get("action", "noop")    # type: ignore[typeddict-item]
         key = (net_key, db_key)
 
         # ── 1a. Deterministic synergy matrix lookup ───────────────────────
@@ -389,8 +393,10 @@ class LeadSRENode:
             except Exception as exc:
                 logger.warning("LLM arbitration failed: %s — using tiebreaker.", exc)
 
-        # ── 1c. Confidence tiebreaker fallback ────────────────────────────
-        if net_intent["confidence"] >= db_intent["confidence"]:
+        # ── 1c. Risk-score tiebreaker fallback (lower risk_score = higher confidence)
+        net_risk = float(net_intent.get("risk_score", 0.5))  # type: ignore[typeddict-item]
+        db_risk  = float(db_intent.get("risk_score", 0.5))   # type: ignore[typeddict-item]
+        if net_risk <= db_risk:   # lower risk = more confident
             action = _NET_TO_ACTION.get(net_key, "noop")
         else:
             action = _DB_TO_ACTION.get(db_key, "noop")
@@ -520,10 +526,12 @@ class LeadSRENode:
         """
         # ── Extract inputs from shared state ─────────────────────────────
         net_intent: NetworkIntent = state.get("network_intent") or NetworkIntent(
-            intent="noop", confidence=0.0, rationale="missing"
+            thought_process="missing", observed_anomalies=[], verified_root_cause="",
+            action="noop", risk_score=0.5
         )
         db_intent: DBIntent = state.get("db_intent") or DBIntent(
-            intent="noop", confidence=0.0, rationale="missing"
+            thought_process="missing", observed_anomalies=[], verified_root_cause="",
+            action="noop", risk_score=0.5
         )
         vec: List[float] = state.get("current_state_tensor", [98.0, 95.0, 5.0])
         step: int = state.get("episode_step", 0)
@@ -669,34 +677,42 @@ if __name__ == "__main__":
 
     node = LeadSRENode(use_llm=False)
 
-    print("\n=== Test 1: AUTO_RESOLVE (throttle + noop, high confidence) ===")
+    print("\n=== Test 1: AUTO_RESOLVE (throttle + noop, low risk) ===")
     s = initial_state([90.0, 40.0, 60.0])
-    s["network_intent"] = NetworkIntent(intent="throttle", confidence=0.92, rationale="high traffic")
-    s["db_intent"]      = DBIntent(intent="noop", confidence=0.91, rationale="db ok")
+    s["network_intent"] = NetworkIntent(thought_process="high traffic", observed_anomalies=["High Traffic"],
+        verified_root_cause="Traffic Spike", action="throttle_traffic", risk_score=0.08)
+    s["db_intent"]      = DBIntent(thought_process="db ok", observed_anomalies=[],
+        verified_root_cause="Normal Operations", action="noop", risk_score=0.09)
     result = node.run_as_node(s)
     print(f"  signal={result['governance_signal'].value}  action={result['recommended_action']}")
     print(f"  trust={result['trust_decision'].value}  blast_warnings={result['blast_radius_warnings']}")
 
     print("\n=== Test 2: HUMAN_ESCALATION (schema_failover, low confidence) ===")
     s2 = initial_state([30.0, 88.0, 70.0])
-    s2["network_intent"] = NetworkIntent(intent="noop", confidence=0.55, rationale="net ok")
-    s2["db_intent"]      = DBIntent(intent="failover", confidence=0.72, rationale="db hot")
+    s2["network_intent"] = NetworkIntent(thought_process="net ok", observed_anomalies=[],
+        verified_root_cause="Normal Operations", action="noop", risk_score=0.45)
+    s2["db_intent"]      = DBIntent(thought_process="db hot", observed_anomalies=["High DB Temp"],
+        verified_root_cause="DB Overload", action="schema_failover", risk_score=0.28)
     result2 = node.run_as_node(s2)
     print(f"  signal={result2['governance_signal'].value}  action={result2['recommended_action']}")
     print(f"  trust={result2['trust_decision'].value}")
 
     print("\n=== Test 3: BLAST_RADIUS_BLOCK (cache_flush with overloaded DB) ===")
     s3 = initial_state([50.0, 92.0, 65.0])
-    s3["network_intent"] = NetworkIntent(intent="noop", confidence=0.91, rationale="net ok")
-    s3["db_intent"]      = DBIntent(intent="cache_flush", confidence=0.93, rationale="db hot")
+    s3["network_intent"] = NetworkIntent(thought_process="net ok", observed_anomalies=[],
+        verified_root_cause="Normal Operations", action="noop", risk_score=0.09)
+    s3["db_intent"]      = DBIntent(thought_process="db hot", observed_anomalies=["High DB Temp"],
+        verified_root_cause="Cache Misses", action="cache_flush", risk_score=0.07)
     result3 = node.run_as_node(s3)
     print(f"  signal={result3['governance_signal'].value}  action={result3['recommended_action']}")
     for w in result3['blast_radius_warnings']:
         print(f"  WARNING: {w[:80]}")
 
-    print("\n=== Test 4: DEEP_NEGOTIATE (circuit_break + failover conflict) ===")
+    print("\n=== Test 4: DEEP_NEGOTIATE (circuit_breaker + schema_failover conflict) ===")
     s4 = initial_state([97.0, 90.0, 10.0])
-    s4["network_intent"] = NetworkIntent(intent="circuit_break", confidence=0.95, rationale="critical")
-    s4["db_intent"]      = DBIntent(intent="failover", confidence=0.93, rationale="critical")
+    s4["network_intent"] = NetworkIntent(thought_process="critical", observed_anomalies=["High Traffic"],
+        verified_root_cause="Traffic Spike", action="circuit_breaker", risk_score=0.05)
+    s4["db_intent"]      = DBIntent(thought_process="critical", observed_anomalies=["High DB Temp"],
+        verified_root_cause="DB Overload", action="schema_failover", risk_score=0.07)
     result4 = node.run_as_node(s4)
     print(f"  signal={result4['governance_signal'].value}  action={result4['recommended_action']}")

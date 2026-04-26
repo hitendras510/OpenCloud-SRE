@@ -105,29 +105,66 @@ We utilize an automated pipeline to train Open-Source LLMs (e.g., Qwen) to opera
 
 The entire stack is designed to run in a single containerized environment, managing the UI, Backend, and AI Agents synchronously.
 
-### 1. Setup & Dependencies
+### 1. Setup & Dependencies (Local Bare-Metal)
+
+**Linux / macOS:**
 ```bash
-git clone [https://github.com/hitendras510/OpenCloud-SRE.git](https://github.com/hitendras510/OpenCloud-SRE.git)
+git clone https://github.com/hitendras510/OpenCloud-SRE.git
 cd OpenCloud-SRE
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Launch the Single-Container Stack
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/hitendras510/OpenCloud-SRE.git
+cd OpenCloud-SRE
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+> **Note:** Running the full training pipeline natively requires an NVIDIA GPU (T4-small or better). However, you can run the UI and Backend locally on any machine by keeping the **"Mock LLM (offline)"** toggle enabled in the War Room sidebar.
+
+### 2. Launch the Stack (Local Bare-Metal)
+
+**Linux / macOS:**
 Use the provided bash script to boot both the FastAPI backend and the Streamlit UI simultaneously:
 ```bash
-# This starts FastAPI on Port 8000 (Data Plane) 
-# and Streamlit on Port 7860 (Control Plane)
+# This starts FastAPI on Port 8000 and Streamlit on Port 7860
 chmod +x start.sh
 ./start.sh
 ```
 
-### 3. Inject Chaos
-1. Navigate to `http://localhost:7860`.
-2. Click the **Start** button to initialize the AI polling loop.
-3. Open the **Chaos Control Center** sidebar, set the target CPU slider to `99%`, and click Execute.
-4. Watch the autonomous SRE detect the anomaly, achieve consensus, and stabilize the system.
+**Windows (PowerShell):**
+Since `start.sh` is a bash script, you can start the backend and UI directly in separate PowerShell windows (ensure the `venv` is activated in both):
+```powershell
+# Terminal 1: Start the Backend (Data Plane)
+uvicorn env.server:app --host 0.0.0.0 --port 8000
+
+# Terminal 2: Start the UI (Control Plane)
+streamlit run ui/app.py --server.port 7860
+```
+
+### 3. Launch via Docker (Recommended for GPU environments)
+
+If you have Docker installed, you can build and run the entire stack in one isolated container:
+```bash
+# Build the Docker image
+docker build -t opencloud-sre .
+
+# Run the container (add --gpus all if you have the NVIDIA Container Toolkit)
+docker run -d -p 7860:7860 -p 8000:8000 --name sre_app opencloud-sre
+```
+
+### 4. Inject Chaos & Interact
+
+1. Navigate to `http://localhost:7860`. You will land on the newly separated **Homepage**.
+2. Open the sidebar navigation and switch to the **⚡ War Room** dashboard.
+3. Click the **▶ Start** button in the sidebar to initialize the AI polling loop.
+4. Open the **🔴 Chaos Control Center** popovers in the sidebar, set a target fault (e.g., Target CPU to `99%`), and click **Execute**.
+5. Watch the autonomous SRE detect the anomaly, achieve consensus, and stabilize the system live in the telemetry charts and ChatOps terminal!
 
 ---
 **OpenCloud-SRE: Turning Cloud Intelligence into an Enterprise Reflex.**
