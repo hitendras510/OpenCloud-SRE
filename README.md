@@ -33,6 +33,8 @@ pinned: false
 
 **Team:** VICODE O(1) | **Themes:** Multi-Agent Systems (Theme 1) & Enterprise Workflows (Theme 3.1)
 
+![OpenCloud-SRE Architecture](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/blog/architecture_diagram.png)
+
 ---
 
 ## 🛑 The Problem: "The AI Scaling Crisis"

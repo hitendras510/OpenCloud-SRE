@@ -32,7 +32,7 @@ We drew inspiration from how expert engineers actually think. A senior SRE who h
 
 We encoded this into a **3-Tier Cognitive Compression Routing Architecture** built on LangGraph:
 
-![Architecture Diagram](architecture_diagram.jpg)
+![Architecture Diagram](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/blog/architecture_diagram.png)
 
 Every cloud incident flows through this graph in milliseconds. Let's walk through each tier.
 
@@ -118,7 +118,7 @@ We built a complete training pipeline to replace generic base models with fine-t
 **Training Results:**
 We successfully trained our agent for 3 epochs. As shown below, the GRPO agent significantly out-learned the random baseline, driving down the Mean Time To Recovery (MTTR).
 
-![Training Performance](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/evaluation/training_performance.png)
+![Training Performance](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/evaluation/training_performance.png)
 
 ---
 
