@@ -84,7 +84,6 @@ In this case, a dedicated **ChatOps LLM** receives the full context and performs
 
 AI shouldn't have unchecked root access to production infrastructure. Between the Shadow Consensus and the Executor, every proposed action must pass through the `LeadSRENode`.
 
-![Governance Layers](https://raw.githubusercontent.com/hitendras510/OpenCloud-SRE/main/blog/governance_layer.png)
 
 ### Predictive Blast Radius Filter 💥
 This is our hallucination kill switch. A static `BLAST_RADIUS_MAP` maps every possible action to its known secondary impacts. 
