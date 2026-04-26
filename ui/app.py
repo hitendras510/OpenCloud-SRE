@@ -126,9 +126,9 @@ with st.sidebar:
 
     # ── Page Navigation ───────────────────────────────────────────────────────
     st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.62rem;color:#484f58;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Navigation</div>', unsafe_allow_html=True)
-    nav_home = st.button("🏠  Home",          use_container_width=True,
+    nav_home = st.button("🏠  Home",          width="stretch",
                          type="primary" if st.session_state.page == "home" else "secondary")
-    nav_dash = st.button("⚡  War Room",       use_container_width=True,
+    nav_dash = st.button("⚡  War Room",       width="stretch",
                          type="primary" if st.session_state.page == "dashboard" else "secondary")
     if nav_home: _go("home")
     if nav_dash: _go("dashboard")
@@ -140,9 +140,9 @@ with st.sidebar:
         step_delay = st.slider("⏱ Step Delay (s)", 0.5, 3.0, 1.0, 0.5)
         st.divider()
         c1, c2 = st.columns(2)
-        start_btn = c1.button("▶ Start", type="primary", use_container_width=True)
-        stop_btn  = c2.button("⏹ Stop",  use_container_width=True)
-        reset_btn = st.button("↺ Reset Episode", use_container_width=True)
+        start_btn = c1.button("▶ Start", type="primary", width="stretch")
+        stop_btn  = c2.button("⏹ Stop",  width="stretch")
+        reset_btn = st.button("↺ Reset Episode", width="stretch")
     else:
         # Defaults so references below don't break
         mock_llm = True; step_delay = 1.0
@@ -181,27 +181,27 @@ with st.sidebar:
     st.divider()
     
     st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.62rem;color:#f43f5e;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">🔴 Chaos Control Center</div>', unsafe_allow_html=True)
-    with st.popover("Inject CPU Spike", use_container_width=True):
+    with st.popover("Inject CPU Spike", width="stretch"):
         cpu_val = st.slider("Target CPU (%)", 50.0, 100.0, 95.0, step=1.0, key="cpu_slider")
-        if st.button("Execute CPU Spike", type="primary", use_container_width=True, key="exec_cpu"):
+        if st.button("Execute CPU Spike", type="primary", width="stretch", key="exec_cpu"):
             try:
                 requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "CPU_SPIKE", "value": cpu_val}, timeout=2)
                 st.toast(f"🔴 CPU Spike Injected ({cpu_val}%)!")
             except Exception as e:
                 st.toast(f"Error injecting fault: {e}")
 
-    with st.popover("Simulate Network Partition", use_container_width=True):
+    with st.popover("Simulate Network Partition", width="stretch"):
         net_val = st.slider("Target Latency/Loss (%)", 50.0, 100.0, 95.0, step=1.0, key="net_slider")
-        if st.button("Execute Partition", type="primary", use_container_width=True, key="exec_net"):
+        if st.button("Execute Partition", type="primary", width="stretch", key="exec_net"):
             try:
                 requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "NETWORK_PARTITION", "value": net_val}, timeout=2)
                 st.toast(f"🔴 Network Partition Simulated ({net_val}%)!")
             except Exception as e:
                 st.toast(f"Error injecting fault: {e}")
 
-    with st.popover("Trigger DB Deadlock", use_container_width=True):
+    with st.popover("Trigger DB Deadlock", width="stretch"):
         db_val = st.slider("Target DB Temperature (%)", 50.0, 100.0, 95.0, step=1.0, key="db_slider")
-        if st.button("Execute DB Deadlock", type="primary", use_container_width=True, key="exec_db"):
+        if st.button("Execute DB Deadlock", type="primary", width="stretch", key="exec_db"):
             try:
                 requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "DB_DEADLOCK", "value": db_val}, timeout=2)
                 st.toast(f"🔴 DB Deadlock Triggered ({db_val}%)!")
@@ -228,6 +228,13 @@ if start_btn and _OK:
     st.session_state.running = True
     import time as _t
     st.session_state.incident_start_time = _t.perf_counter()
+    # Inject fault so the backend crashes as expected
+    try:
+        requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "CPU_SPIKE", "value": 98.0}, timeout=1)
+        requests.post("http://127.0.0.1:8000/inject-fault", json={"fault_type": "DB_DEADLOCK", "value": 95.0}, timeout=1)
+    except:
+        pass
+
     st.session_state.timeline = [{
         "elapsed": 0.0, "icon": "🚨", "color": "#f43f5e",
         "event": "INCIDENT DETECTED",
@@ -803,7 +810,7 @@ if st.session_state.page == "dashboard":
                                 bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
                 )
                 fig.update_layout(**layout)
-                chart_ph.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+                chart_ph.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
             _chart()
 
             # ── GAUGE ROW ──────────────────────────────────────────────────────
@@ -835,7 +842,7 @@ if st.session_state.page == "dashboard":
                         }
                     ))
                     fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=155, margin=dict(l=10,r=10,t=28,b=0))
-                    col.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+                    col.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
 
             # ── PARTIAL OBSERVABILITY ──────────────────────────────────────────
             st.markdown('<p class="section-label" style="margin-top:14px">── AGENT BLIND SPOTS</p>', unsafe_allow_html=True)
@@ -925,11 +932,11 @@ if st.session_state.page == "dashboard":
                     </div>
                     """, unsafe_allow_html=True)
                     ca, cb = st.columns(2)
-                    if ca.button("✅ Approve", type="primary", use_container_width=True, key="approve"):
+                    if ca.button("✅ Approve", type="primary", width="stretch", key="approve"):
                         st.session_state.human_approved = True
                         st.session_state.gov_signal     = "AUTO_RESOLVE"
                         st.rerun()
-                    if cb.button("❌ Reject", use_container_width=True, key="reject"):
+                    if cb.button("❌ Reject", width="stretch", key="reject"):
                         st.session_state.human_rejected = True
                         st.session_state.gov_signal     = "DEEP_NEGOTIATE"
                         st.session_state.running        = False
@@ -946,6 +953,8 @@ if st.session_state.page == "dashboard":
                     term_ph.markdown(
                         '<div class="terminal"><span style="color:#21262d">// Awaiting incident…</span></div>',
                         unsafe_allow_html=True); return
+                
+                import json
                 lines = []
                 for m in log[-40:]:
                     role    = m.get("role","sys")
@@ -953,13 +962,37 @@ if st.session_state.page == "dashboard":
                     ts      = m.get("timestamp","")[:19].replace("T"," ")
                     css     = ROLE_CSS.get(role,"t-exec")
                     ico     = ROLE_ICON.get(role,"SYS")
+                    
+                    # Parse JSON content for better readability
+                    parsed_html = ""
+                    try:
+                        data = json.loads(content)
+                        if isinstance(data, dict):
+                            action = data.get("action", data.get("decision", "UNKNOWN"))
+                            conf = data.get("confidence", "N/A")
+                            reason = data.get("reasoning", data.get("logic", ""))
+                            
+                            # Enhanced JSON Card UI
+                            parsed_html = f'<div style="margin-left: 28px; padding: 6px 10px; border-left: 3px solid #30363d; background: rgba(13, 17, 23, 0.7); border-radius: 4px; margin-top: 4px; font-size: 0.85em;">'
+                            parsed_html += f'<div style="color: #58a6ff; font-weight: bold; letter-spacing: 0.5px;">⚡ {action} <span style="color: #8b949e; font-weight: normal; font-size: 0.9em;">(Confidence: {conf})</span></div>'
+                            if reason:
+                                parsed_html += f'<div style="color: #c9d1d9; margin-top: 4px; line-height: 1.4;">{reason}</div>'
+                            parsed_html += '</div>'
+                        else:
+                            raise ValueError
+                    except:
+                        # Fallback for plain text
+                        parsed_html = f'<span style="color:#8b949e; margin-left: 8px;">{content}</span>'
+
                     lines.append(
-                        f'<span style="color:#21262d">{ts}</span> '
-                        f'<span class="{css}">[{ico}]</span> '
-                        f'<span style="color:#8b949e">{content}</span>'
+                        f'<div style="margin-bottom: 8px; font-family: monospace;">'
+                        f'<span style="color:#484f58; font-size: 0.85em;">{ts}</span> '
+                        f'<span class="{css}" style="font-weight: bold;">[{ico}]</span> '
+                        f'{parsed_html}</div>'
                     )
+                
                 term_ph.markdown(
-                    '<div class="terminal">' + "<br>".join(lines) + "</div>",
+                    '<div class="terminal" style="max-height: 500px; overflow-y: auto;">' + "".join(lines) + "</div>",
                     unsafe_allow_html=True)
             _render_term()
 
@@ -1043,7 +1076,7 @@ if st.session_state.page == "dashboard":
                                        font=dict(size=10, color="#484f58", family="JetBrains Mono"))
                 layout["yaxis"]["title"] = "Seconds"
                 fig.update_layout(**layout, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+                st.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
 
             # ── TOKEN COST ─────────────────────────────────────────────────────
             with ac2:
@@ -1066,7 +1099,7 @@ if st.session_state.page == "dashboard":
                                         font=dict(size=10, color="#484f58", family="JetBrains Mono"))
                 layout2["yaxis"]["title"] = "Tokens"
                 fig2.update_layout(**layout2, showlegend=False)
-                st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar":False})
+                st.plotly_chart(fig2, width="stretch", config={"displayModeBar":False})
 
         st.markdown("---")
 
@@ -1096,7 +1129,7 @@ if st.session_state.page == "dashboard":
                 fig.update_layout(**layout, showlegend=True,
                                   legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.1,
                                              bgcolor="rgba(0,0,0,0)", font=dict(size=9)))
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+                st.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
             else:
                 st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.68rem;color:#484f58;padding:30px 0;text-align:center">// Start simulation</div>', unsafe_allow_html=True)
 
@@ -1115,7 +1148,7 @@ if st.session_state.page == "dashboard":
                 layout = _plotly_base(220)
                 layout["xaxis"]["tickfont"] = dict(size=7, color="#484f58", family="JetBrains Mono")
                 fig.update_layout(**layout, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+                st.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
             else:
                 st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.68rem;color:#484f58;padding:30px 0;text-align:center">// Start simulation</div>', unsafe_allow_html=True)
 
@@ -1134,7 +1167,7 @@ if st.session_state.page == "dashboard":
                 layout = _plotly_base(220)
                 layout["yaxis"].update(range=[0,1.05], tickformat=".0%")
                 fig.update_layout(**layout, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+                st.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # TAB 3  ——  DNA MEMORY
@@ -1181,7 +1214,7 @@ if st.session_state.page == "dashboard":
                 q_d = st.slider("DB Temperature", 0.0, 100.0, float(dv), 1.0, key="q_d")
                 q_n = st.slider("Network Health", 0.0, 100.0, float(nv), 1.0, key="q_n")
 
-                if st.button("🔍 Query FAISS Index", type="primary", use_container_width=True):
+                if st.button("🔍 Query FAISS Index", type="primary", width="stretch"):
                     res = query_dna([q_t, q_d, q_n])
                     c = res['confidence']
                     fp = res['is_fast_path']
@@ -1249,7 +1282,7 @@ if st.session_state.page == "dashboard":
                             height=350, margin=dict(l=0,r=0,t=10,b=0),
                             font=dict(color="#484f58", size=9, family="JetBrains Mono"),
                         )
-                        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+                        st.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
 
                 # color legend
                 st.markdown('<p class="section-label" style="margin-top:8px">── ACTION LEGEND</p>', unsafe_allow_html=True)
@@ -1416,7 +1449,9 @@ if st.session_state.running and not st.session_state.resolved:
                 
             if data.get("status") == "CRITICAL" and _OK and graph:
                 _step()
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         pass
 
     if st.session_state.resolved:
